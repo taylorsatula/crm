@@ -196,6 +196,116 @@ Valid state transitions for entities with status fields. Invalid transitions sho
 
 ---
 
+## Lead Status
+
+```
+              ┌──────────┐
+              │          │
+    create ──►│   new    │
+              │          │
+              └────┬─────┘
+                   │
+       ┌───────────┼───────────────────────────┐
+       │           │                           │
+       │ contact() │ qualify()                 │ archive()
+       ▼           │                           ▼
+  ┌──────────┐     │                     ┌──────────┐
+  │          │     │                     │          │
+  │contacted │     │                     │ archived │
+  │          │     │                     │          │
+  └────┬─────┘     │                     └──────────┘
+       │           │                           ▲
+       │ qualify() │                           │
+       ▼           ▼                           │
+  ┌────────────────────┐                       │
+  │                    │                       │
+  │     qualified      │───────────────────────┤ archive()
+  │                    │                       │
+  └─────────┬──────────┘                       │
+            │                                  │
+            │ convert()                        │
+            ▼                                  │
+  ┌──────────┐                                 │
+  │          │                                 │
+  │converted │─────────────────────────────────┘
+  │          │    (cannot archive converted)
+  └──────────┘
+```
+
+**Transitions:**
+
+| From | To | Trigger | Notes |
+|------|-----|---------|-------|
+| (new) | `new` | `create()` | Default state |
+| `new` | `contacted` | `contact()` | Mark that follow-up happened |
+| `new` | `qualified` | `qualify()` | Skip contacted if immediately qualified |
+| `new` | `converted` | `convert()` | Quick conversion (immediate sale) |
+| `new` | `archived` | `archive()` | Dead lead |
+| `contacted` | `qualified` | `qualify()` | Confirmed interest |
+| `contacted` | `converted` | `convert()` | Direct conversion |
+| `contacted` | `archived` | `archive()` | No interest after contact |
+| `qualified` | `converted` | `convert()` | Creates customer, sets `converted_customer_id` |
+| `qualified` | `archived` | `archive()` | Lost opportunity |
+
+**Terminal States:**
+- `converted` - Lead became a customer (immutable)
+- `archived` - Lead is dead/lost
+
+**Conversion:**
+When `convert()` is called:
+1. Creates new customer record from lead data
+2. Sets `converted_at` timestamp
+3. Sets `converted_customer_id` to link lead → customer
+4. Lead becomes immutable
+
+**Notes:**
+- Leads can be converted from any non-terminal state
+- Archive is available from any non-terminal state except `converted`
+- No "unarchive" - create a new lead if needed
+
+---
+
+## Model Authorization Status
+
+```
+              ┌──────────┐
+              │          │
+   request ──►│ pending  │
+              │          │
+              └────┬─────┘
+                   │
+       ┌───────────┼───────────┐
+       │           │           │
+       │ authorize │ deny()    │ (timeout)
+       ▼           ▼           ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │          │ │          │ │          │
+  │authorized│ │  denied  │ │ expired  │
+  │          │ │          │ │          │
+  └──────────┘ └──────────┘ └──────────┘
+```
+
+**Transitions:**
+
+| From | To | Trigger | Notes |
+|------|-----|---------|-------|
+| (new) | `pending` | Model requests restricted action | Auto-created |
+| `pending` | `authorized` | Human clicks "Allow Once" or "Allow Always" | Action executes |
+| `pending` | `denied` | Human clicks "Deny" | Action blocked, note returned to model |
+| `pending` | `expired` | Timeout (default 24 hours) | Auto-transition by worker |
+
+**Terminal States:**
+- `authorized` - Human approved, action executed
+- `denied` - Human rejected
+- `expired` - No decision made in time
+
+**Notes:**
+- All states are terminal - no re-review
+- If expired and still needed, model must create new request
+- "Allow Always" also upgrades the action's permission level for future calls
+
+---
+
 ## State Validation Pattern
 
 Enforce valid transitions in service methods:
@@ -236,3 +346,5 @@ def cancel(self, ticket_id: UUID) -> Ticket:
 | Ticket confirmation | pending, confirmed, declined, reschedule_requested | confirmed, declined |
 | Invoice | draft, sent, partial, paid, void | paid, void |
 | Scheduled Message | pending, sent, cancelled, failed | sent, cancelled |
+| Lead | new, contacted, qualified, converted, archived | converted, archived |
+| Model Authorization | pending, authorized, denied, expired | authorized, denied, expired |

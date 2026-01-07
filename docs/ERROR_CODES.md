@@ -305,6 +305,139 @@ Canonical reference for all error codes in the CRM system. Every error returned 
 
 ---
 
+## Lead Errors
+
+### `LEAD_NOT_FOUND`
+**HTTP Status:** 404
+
+**When to use:**
+- Lead ID doesn't exist
+- Lead exists but is soft-deleted
+- Lead exists but belongs to different user (RLS filtered)
+
+**Example message:** `"Lead not found"`
+
+**Client handling:** Show "not found" state. May be stale link.
+
+---
+
+### `LEAD_ALREADY_CONVERTED`
+**HTTP Status:** 409
+
+**When to use:**
+- Attempting to modify a converted lead
+- Attempting to convert an already-converted lead
+- Attempting to archive a converted lead
+- Attempting any state transition on a converted lead
+
+**Example message:** `"Lead has been converted to a customer and cannot be modified."`
+
+**Response includes:** `converted_customer_id` in data for linking to customer record
+
+**Client handling:** Show converted state. Link to the customer record.
+
+---
+
+### `LEAD_ARCHIVED`
+**HTTP Status:** 409
+
+**When to use:**
+- Attempting to contact an archived lead
+- Attempting to qualify an archived lead
+- Attempting to convert an archived lead
+
+**Example message:** `"Lead has been archived."`
+
+**Client handling:** Show archived state. Suggest creating new lead if prospect re-engages.
+
+---
+
+### `LEAD_INVALID_TRANSITION`
+**HTTP Status:** 409
+
+**When to use:**
+- Invalid state machine transition (uses `INVALID_STATUS_TRANSITION` pattern)
+- See STATE_MACHINES.md for valid lead transitions
+
+**Example messages:**
+- `"Cannot transition from 'converted' to 'contacted'"`
+- `"Cannot archive a converted lead"`
+
+**Client handling:** Refresh lead state. Show current status.
+
+---
+
+## Model Authorization Errors
+
+### `AUTHORIZATION_REQUIRED`
+**HTTP Status:** 202 (Accepted)
+
+**When to use:**
+- Model requested an action that requires human authorization
+- Action has been queued for review
+- NOT an error - indicates pending human review
+
+**Example message:** `"This action requires authorization. Request queued for review."`
+
+**Response includes:**
+- `queue_id` - ID of the authorization request
+- `reason` - Why authorization is required
+- `expires_at` - When the request will expire if not acted upon
+
+**Client/MCP handling:** Inform user action is pending. Poll for result or wait for callback.
+
+---
+
+### `AUTHORIZATION_DENIED`
+**HTTP Status:** 403
+
+**When to use:**
+- Human reviewed the authorization request and denied it
+- Model attempted to re-execute a denied action
+
+**Example message:** `"Authorization denied: [human's note if provided]"`
+
+**Response includes:**
+- `queue_id` - Original authorization request ID
+- `denied_by` - Who denied it
+- `denied_at` - When
+- `notes` - Human's explanation (if provided)
+
+**Client/MCP handling:** Inform user. Do not retry without new user instruction.
+
+---
+
+### `AUTHORIZATION_EXPIRED`
+**HTTP Status:** 410 (Gone)
+
+**When to use:**
+- Authorization request was not reviewed before expiration
+- Model attempted to execute an action with an expired authorization
+
+**Example message:** `"Authorization request expired. Please retry to create a new request."`
+
+**Client/MCP handling:** Create new authorization request if action still needed.
+
+---
+
+### `AUTHORIZATION_PENDING`
+**HTTP Status:** 202 (Accepted)
+
+**When to use:**
+- Model polling for authorization result that's still pending
+- NOT an error - indicates still waiting for human review
+
+**Example message:** `"Authorization pending human review."`
+
+**Response includes:**
+- `queue_id` - Authorization request ID
+- `requested_at` - When queued
+- `expires_at` - Deadline for human review
+
+**Client/MCP handling:** Continue polling or wait.
+
+---
+
 ## Infrastructure Errors
 
 ### `INTERNAL_ERROR`
@@ -395,6 +528,14 @@ All errors follow this structure:
 | `INVOICE_ALREADY_PAID` | 409 | Business Logic |
 | `SERVICE_IN_USE` | 409 | Business Logic |
 | `MESSAGE_ALREADY_SENT` | 409 | Business Logic |
+| `LEAD_NOT_FOUND` | 404 | Resource |
+| `LEAD_ALREADY_CONVERTED` | 409 | Business Logic |
+| `LEAD_ARCHIVED` | 409 | Business Logic |
+| `LEAD_INVALID_TRANSITION` | 409 | Business Logic |
+| `AUTHORIZATION_REQUIRED` | 202 | Model Authorization |
+| `AUTHORIZATION_DENIED` | 403 | Model Authorization |
+| `AUTHORIZATION_EXPIRED` | 410 | Model Authorization |
+| `AUTHORIZATION_PENDING` | 202 | Model Authorization |
 | `INTERNAL_ERROR` | 500 | Infrastructure |
 | `SERVICE_UNAVAILABLE` | 503 | Infrastructure |
 | `LLM_UNAVAILABLE` | 503 | Infrastructure |
@@ -450,6 +591,9 @@ async function apiCall(endpoint, options) {
       case 'TICKET_IMMUTABLE':
       case 'TICKET_NOT_CLOCKABLE':
       case 'INVALID_STATUS_TRANSITION':
+      case 'LEAD_ALREADY_CONVERTED':
+      case 'LEAD_ARCHIVED':
+      case 'LEAD_INVALID_TRANSITION':
         // Stale state - refresh and show current
         refreshAndShowState();
         break;
@@ -457,6 +601,22 @@ async function apiCall(endpoint, options) {
       case 'SERVICE_UNAVAILABLE':
       case 'LLM_UNAVAILABLE':
         showRetryMessage();
+        break;
+
+      case 'AUTHORIZATION_REQUIRED':
+      case 'AUTHORIZATION_PENDING':
+        // Action queued for human review (MCP responses)
+        showAuthorizationPending(data.data.queue_id);
+        break;
+
+      case 'AUTHORIZATION_DENIED':
+        // Human denied the model's request
+        showAuthorizationDenied(data.data.notes);
+        break;
+
+      case 'AUTHORIZATION_EXPIRED':
+        // Request expired before human reviewed it
+        showAuthorizationExpired();
         break;
 
       default:

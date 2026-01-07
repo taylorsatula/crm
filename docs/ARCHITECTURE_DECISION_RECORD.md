@@ -177,6 +177,9 @@ An automated email queued for future delivery. Created by "reach out in X months
 **Waitlist**
 Customers waiting for earlier appointments. Enables opportunistic scheduling when gaps appear and technician is in the area.
 
+**Lead**
+A potential customer captured from a phone call or inquiry. Contains freeform notes from the call which are processed by LLM into structured data (name, phone, email, address, service interest, source, urgency, property details). Leads follow a lifecycle: new → contacted → qualified → converted|archived. When converted, a Customer record is created and linked. Leads exist separately from Customers because they may never convert, and we don't want to pollute customer data with unqualified prospects.
+
 ### Entity Relationships
 
 ```
@@ -198,6 +201,8 @@ Ticket (1) ←→ (many) AuditEntry
 Service (1) ←→ (many) LineItem
 
 Invoice (standalone OR from Ticket)
+
+Lead (0-1) → (0-1) Contact  (via conversion)
 ```
 
 ### Pricing Model Examples
@@ -770,6 +775,94 @@ As patterns emerge from LLM extraction, when and how do we formalize them? Stay 
 
 ---
 
+## Part 11: MCP Integration
+
+### Overview
+
+The CRM exposes an MCP (Model Context Protocol) server enabling an external LLM to act as an "office manager" - handling scheduling, customer management, leads, invoicing, and all CRM operations. The MCP is a first-class citizen of the architecture, not bolted on.
+
+### Design Decision: Evergreen Capabilities
+
+**Decision**: The MCP discovers available operations via a `/api/capabilities` endpoint that is auto-generated from domain handler registrations.
+
+**Rationale**:
+- Single source of truth: add an action to a handler, MCP automatically sees it
+- No manual synchronization between API and MCP tool definitions
+- MCP never goes stale as API evolves
+- Domain handlers already declaratively define their operations
+
+### Design Decision: Two-Layer Tool Architecture
+
+**Decision**: Provide two layers of MCP tools:
+1. **Raw API tools** (`crm_capabilities`, `crm_query`, `crm_action`) - direct passthrough to actions/data endpoints
+2. **Workflow tools** (`schedule_appointment`, `daily_briefing`, etc.) - high-level orchestrations for common tasks
+
+**Rationale**:
+- Raw tools ensure nothing is blocked - LLM can always fall back to primitives
+- Workflow tools reduce token usage and error rate for common patterns
+- Workflows encode business logic (e.g., sending confirmation after scheduling)
+- Two layers complement each other - use workflows when available, raw when needed
+
+### Design Decision: Model Authorization Queue
+
+**Decision**: Actions requiring human oversight go to a Model Authorization Queue with three permission levels:
+- `unrestricted` - execute immediately
+- `soft_limit` - execute but require reasoning field
+- `requires_authorization` - queue for human review
+
+**Rationale**:
+- Some operations need human oversight (deleting customers with history, voiding paid invoices)
+- Better UX than blocking the model entirely - action is queued, not rejected
+- Human sees model's reasoning in context, can make informed decision
+- "Allow always" option lets permissions evolve based on trust
+
+### Design Decision: Allow Once vs Allow Always
+
+**Decision**: When human reviews an authorization request, they can:
+- **Allow Once** - execute this specific action, don't change permissions
+- **Allow Always** - execute and upgrade this action to `unrestricted`
+- **Deny** - reject with optional note to model
+
+**Rationale**:
+- "Allow Once" handles edge cases without creating permanent policy changes
+- "Allow Always" reduces friction as trust builds
+- Permissions can tighten over time if issues arise (manual override)
+- Deny with note helps model learn what's acceptable
+
+### MCP Tool Inventory
+
+**Layer 1: Raw API**
+| Tool | Purpose |
+|------|---------|
+| `crm_capabilities` | Discover available domains, actions, data types |
+| `crm_query` | Query any data type with filters, pagination, expansion |
+| `crm_action` | Execute any action on any domain |
+
+**Layer 2: Workflows**
+| Tool | Purpose |
+|------|---------|
+| `schedule_appointment` | Customer lookup → availability → ticket → confirmation |
+| `handle_reschedule_request` | Find ticket → validate new time → cancel old → create new |
+| `process_lead` | Raw notes → LLM extraction → create lead → schedule followup |
+| `send_invoice` | Create from ticket → send to customer |
+| `daily_briefing` | Today's schedule + pending leads + overdue invoices |
+| `find_customer` | Fuzzy search across name/phone/email/address/notes |
+
+### Permission Mapping
+
+| Operation | Permission | Rationale |
+|-----------|------------|-----------|
+| Create entity | unrestricted | Low risk, easily reversible |
+| Update entity | unrestricted | Audited, reversible |
+| Read/query | unrestricted | No side effects |
+| Cancel appointment | soft_limit | Requires reasoning |
+| Archive lead | soft_limit | Requires reasoning |
+| Delete entity with history | requires_authorization | Data loss risk |
+| Void paid invoice | requires_authorization | Financial impact |
+| Bulk operations (>5 items) | requires_authorization | Blast radius |
+
+---
+
 ## Appendix A: Terminology
 
 | Term | Definition |
@@ -783,8 +876,13 @@ As patterns emerge from LLM extraction, when and how do we formalize them? Stay 
 | Attribute | Structured data point attached to a contact, derived from notes or set explicitly |
 | Scheduled Message | Automated email queued for future delivery |
 | Waitlist | Customers waiting for earlier appointment availability |
+| Lead | Potential customer captured from phone call/inquiry, pre-conversion |
 | Close-Out | The process of completing a ticket, making it immutable |
+| Conversion | The process of turning a lead into a customer record |
 | RLS | Row Level Security—PostgreSQL feature for automatic data isolation |
+| MCP | Model Context Protocol—Anthropic's protocol for AI tool integration |
+| Model Authorization | Human review/approval of restricted model actions |
+| Capabilities Endpoint | API endpoint that advertises available operations to MCP |
 
 ---
 
@@ -807,6 +905,15 @@ As patterns emerge from LLM extraction, when and how do we formalize them? Stay 
 | 2024-12-30 | Forced close-out flow | Multi-step wizard with no shortcuts. Friction produces good data. |
 | 2024-12-30 | Attributes on Contact only | No separate Property entity. Let schema emerge from usage. |
 | 2024-12-30 | Templatized emails | Developer HTML wrapper, user plaintext content with variables. |
+| 2025-01-07 | Separate leads table (not extending customers) | Leads have different lifecycle, may never convert, don't pollute customer data |
+| 2025-01-07 | raw_notes as source of truth for leads | Capture everything during call, structure later via LLM |
+| 2025-01-07 | Simple reminder_at timestamp for leads | Placeholder for future CalDAV integration, avoid over-engineering |
+| 2025-01-07 | Lead LLM extraction with human validation | Balance speed of capture with data quality |
+| 2025-01-07 | MCP as first-class citizen | LLM can do everything a human can; architectural integration not bolt-on |
+| 2025-01-07 | Auto-generated capabilities endpoint | Single source of truth; MCP never goes stale as API evolves |
+| 2025-01-07 | Two-layer MCP tools (raw + workflows) | Raw for flexibility, workflows for common patterns and reduced token usage |
+| 2025-01-07 | Model Authorization Queue | Human oversight for destructive ops without blocking model entirely |
+| 2025-01-07 | Allow Once / Allow Always / Deny | Flexible authorization that can evolve with trust |
 
 ---
 

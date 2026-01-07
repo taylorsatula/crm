@@ -657,7 +657,88 @@ CREATE POLICY waitlist_insert ON waitlist FOR INSERT
 
 
 -- =============================================================================
--- SECTION 6: Recurring Appointments
+-- SECTION 6: Leads
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- leads
+-- -----------------------------------------------------------------------------
+-- Potential customers captured from phone calls or inquiries.
+-- Raw notes processed by LLM into structured data.
+-- Soft delete. RLS filters to current user AND not deleted.
+-- -----------------------------------------------------------------------------
+CREATE TABLE leads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+    -- Status: new → contacted → qualified → converted|archived
+    status TEXT NOT NULL DEFAULT 'new',
+
+    -- Raw capture (what user types during call - source of truth)
+    raw_notes TEXT NOT NULL,
+
+    -- LLM-extracted structured data (nullable until processed)
+    extracted_data JSONB,
+    extracted_at TIMESTAMPTZ,
+
+    -- Editable fields (from extraction or manual entry)
+    name TEXT,
+    phone TEXT,
+    email TEXT,
+    address TEXT,
+    service_interest TEXT,
+    lead_source TEXT,        -- 'cold_call', 'referral', 'website', 'other'
+    urgency TEXT,            -- 'low', 'medium', 'high'
+    property_details TEXT,
+
+    -- Reminder for follow-up (future CalDAV integration placeholder)
+    reminder_at TIMESTAMPTZ,
+    reminder_note TEXT,
+
+    -- Conversion tracking
+    converted_at TIMESTAMPTZ,
+    converted_customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ,
+
+    CONSTRAINT leads_valid_status CHECK (status IN ('new', 'contacted', 'qualified', 'converted', 'archived')),
+    CONSTRAINT leads_valid_urgency CHECK (urgency IS NULL OR urgency IN ('low', 'medium', 'high')),
+    CONSTRAINT leads_valid_source CHECK (lead_source IS NULL OR lead_source IN ('cold_call', 'referral', 'website', 'other')),
+    CONSTRAINT leads_converted_has_customer CHECK (
+        (status = 'converted' AND converted_customer_id IS NOT NULL AND converted_at IS NOT NULL)
+        OR status != 'converted'
+    )
+);
+
+CREATE TRIGGER leads_updated_at BEFORE UPDATE ON leads
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Indexes
+CREATE INDEX idx_leads_user ON leads(user_id);
+CREATE INDEX idx_leads_status ON leads(user_id, status);
+CREATE INDEX idx_leads_reminder ON leads(reminder_at) WHERE reminder_at IS NOT NULL AND status NOT IN ('converted', 'archived');
+CREATE INDEX idx_leads_created ON leads(user_id, created_at);
+
+-- Fuzzy search indexes (pg_trgm)
+CREATE INDEX idx_leads_name_trgm ON leads USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_leads_phone_trgm ON leads USING GIN (phone gin_trgm_ops);
+CREATE INDEX idx_leads_email_trgm ON leads USING GIN (email gin_trgm_ops);
+
+-- RLS
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY leads_isolation ON leads FOR ALL
+    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+
+CREATE POLICY leads_insert ON leads FOR INSERT
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+
+
+-- =============================================================================
+-- SECTION 7: Recurring Appointments
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -732,7 +813,7 @@ CREATE INDEX idx_recurring_template_services_template ON recurring_template_serv
 
 
 -- =============================================================================
--- SECTION 7: Audit Trail
+-- SECTION 8: Audit Trail
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -754,6 +835,71 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_log_user ON audit_log(user_id);
 CREATE INDEX idx_audit_log_created ON audit_log(created_at);
+
+
+-- =============================================================================
+-- SECTION 9: Model Authorization Queue
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- model_authorization_queue
+-- -----------------------------------------------------------------------------
+-- Queue for MCP actions requiring human authorization.
+-- Pending requests show in web UI at /authorizations.
+-- RLS filters to current user. Status tracked for polling.
+-- -----------------------------------------------------------------------------
+CREATE TABLE model_authorization_queue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+    -- What action was requested
+    domain TEXT NOT NULL,           -- 'contact', 'invoice', etc.
+    action TEXT NOT NULL,           -- 'delete', 'void', etc.
+    data JSONB NOT NULL,            -- Action parameters
+
+    -- Why it requires authorization
+    reason TEXT NOT NULL,           -- 'Customer has 15 tickets worth $4,500'
+
+    -- Model's explanation
+    model_reasoning TEXT,           -- Why model wants to do this
+
+    -- Status: pending → authorized | denied | expired
+    status TEXT NOT NULL DEFAULT 'pending',
+
+    -- Human decision
+    decided_by UUID REFERENCES users(id),
+    decided_at TIMESTAMPTZ,
+    decision_notes TEXT,            -- Human's note back to model
+
+    -- For "Allow Always" - should we upgrade the permission?
+    upgrade_permission BOOLEAN DEFAULT FALSE,
+
+    -- Timestamps
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '24 hours'),
+
+    CONSTRAINT auth_queue_valid_status CHECK (status IN ('pending', 'authorized', 'denied', 'expired')),
+    CONSTRAINT auth_queue_decision_complete CHECK (
+        (status = 'pending' AND decided_by IS NULL AND decided_at IS NULL)
+        OR (status IN ('authorized', 'denied') AND decided_by IS NOT NULL AND decided_at IS NOT NULL)
+        OR (status = 'expired')
+    )
+);
+
+-- Indexes
+CREATE INDEX idx_auth_queue_user_pending ON model_authorization_queue(user_id, status)
+    WHERE status = 'pending';
+CREATE INDEX idx_auth_queue_expires ON model_authorization_queue(expires_at)
+    WHERE status = 'pending';
+
+-- RLS
+ALTER TABLE model_authorization_queue ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY auth_queue_isolation ON model_authorization_queue FOR ALL
+    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+
+CREATE POLICY auth_queue_insert ON model_authorization_queue FOR INSERT
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 
 -- =============================================================================

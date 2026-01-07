@@ -191,7 +191,8 @@
     │                    │ line_item │                                    │
     │                    └───────────┘                                    │
     │                                                                      │
-    │  Also: note.py, attribute.py, scheduled_message.py, waitlist.py    │
+    │  Also: note.py, attribute.py, scheduled_message.py, waitlist.py,   │
+    │        lead.py                                                      │
     └─────────────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -236,7 +237,8 @@
     │  │ - ticket_service   │     │                    │                  │
     │  └────────────────────┘     └────────────────────┘                  │
     │                                                                      │
-    │  Also: message_service (scheduled emails), waitlist_service          │
+    │  Also: message_service (scheduled emails), waitlist_service,         │
+    │        lead_service (lead capture, conversion, LLM extraction)      │
     └─────────────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -333,11 +335,91 @@
              │
              ▼
     ┌──────────────────────────────────────────────────────────┐
-    │  Integrates into ticket_service close-out flow           │
+    │  Integrates into:                                        │
     │                                                          │
-    │  ticket.close() → extraction.extract_attributes(notes)   │
-    │                 → present to technician for validation   │
-    │                 → persist to contact.attributes          │
+    │  1. ticket_service close-out flow                        │
+    │     ticket.close() → extract_attributes(notes)           │
+    │                    → present to technician for validation│
+    │                    → persist to contact.attributes       │
+    │                                                          │
+    │  2. lead_service capture flow                            │
+    │     lead.create() → extract_lead_data(raw_notes)         │
+    │                   → populate editable fields             │
+    │                   → user reviews/edits before save       │
+    └──────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           MCP INTEGRATION WATERFALL                           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PARALLEL TRACK (Can develop alongside Phase 3-4)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────┐
+    │  api/            │
+    │  capabilities.py │
+    │                  │
+    │  Auto-generated  │
+    │  from domain     │
+    │  handlers        │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - action_       │
+    │    handlers      │
+    │  - data_services │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  model_          │
+    │  authorization/  │
+    │                  │
+    │  - queue table   │
+    │  - service       │
+    │  - API routes    │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - postgres_     │
+    │    client        │
+    │  - auth          │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  mcp/            │
+    │  server.py       │
+    │                  │
+    │  MCP server      │
+    │  entry point     │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - capabilities  │
+    │  - authorization │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐     ┌──────────────────┐
+    │  mcp/tools/      │     │  mcp/tools/      │
+    │  raw.py          │     │  workflows.py    │
+    │                  │     │                  │
+    │  crm_capabilities│     │  schedule_appt   │
+    │  crm_query       │     │  daily_briefing  │
+    │  crm_action      │     │  process_lead    │
+    │                  │     │  find_customer   │
+    │                  │     │  etc.            │
+    └────────┬─────────┘     └────────┬─────────┘
+             │                        │
+             └───────────┬────────────┘
+                         ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  templates/authorizations/                                │
+    │                                                          │
+    │  - queue.html      (list pending authorizations)         │
+    │  - detail.html     (review single authorization)         │
+    │                                                          │
+    │  Web UI for human review of model actions                │
     └──────────────────────────────────────────────────────────┘
 
 
@@ -402,7 +484,18 @@
     │                  │     │                  │
     │  - create.html   │     │  - scheduled.htm │
     │  - send.html     │     │  - templates.htm │
-    └──────────────────┘     └──────────────────┘
+    └────────┬─────────┘     └────────┬─────────┘
+             │                        │
+             └───────────┬────────────┘
+                         ▼
+                 ┌──────────────────┐
+                 │  templates/      │
+                 │  leads/          │
+                 │                  │
+                 │  - capture.html  │  ← Quick freeform entry
+                 │  - review.html   │    (LLM extraction review)
+                 │  - list.html     │
+                 └──────────────────┘
 
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
