@@ -156,8 +156,11 @@ The unified entity for scheduled and performed work. A ticket IS an appointmentâ
 - Duration (clock-in/clock-out)
 - Status tracking
 - After-action notes
+- Estimated pricing flag (optional)
 
 Tickets are **mutable until closed, immutable after**. All modifications are captured in the audit trail.
+
+When `is_price_estimated` is true, the ticket displays "Estimated" pricing in the UI and confirmation emails. At close-out, the technician must confirm/update the final price before completing the ticket.
 
 **LineItem**
 A service instance on a ticket. Captures the service performed, quantity (for per-unit), duration (for time-tracked), and final price.
@@ -249,6 +252,7 @@ This is the critical UX moment. It deserves its own section because getting it w
    - Actual duration (clock-in/clock-out, but verify)
    - Services performed (may have changed from original booking)
    - Prices (especially for flexible services)
+   - **If estimated**: Price confirmation is requiredâ€”cannot skip
 
 4. **Freeform Notes**
    Text field for observations: "Elderly woman, very nice. 20+ screens. Dog named Biscuit, keep gate closed."
@@ -983,6 +987,68 @@ Invoice send requested
 
 ---
 
+## Part 13: Input Sanitization
+
+### Overview
+
+Defense-in-depth sanitization strips sensitive data (credit card numbers, SSNs) from freeform text fields. Even though Stripe handles payment processing, users might accidentally paste card numbers into notes fields.
+
+### Design Decision: Three-Layer Defense
+
+**Decision**: Sanitize at frontend, backend, and database layers - but only for notes/message fields.
+
+**Rationale**:
+- Defense in depth - any single layer can fail
+- Frontend gives immediate user feedback
+- Backend is authoritative (can't be bypassed)
+- Database triggers are last line of defense
+- Limited scope avoids false positives on structured fields
+
+| Layer | Purpose | Behavior |
+|-------|---------|----------|
+| Frontend (JS) | Immediate feedback | Strip on blur/submit, warn user |
+| Backend (API) | Authoritative | Strip before processing, log to security_events |
+| Database (trigger) | Last defense | Strip on INSERT/UPDATE |
+
+### Design Decision: Visible Redaction
+
+**Decision**: Replace sensitive data with `[REDACTED]` and show user warning.
+
+**Rationale**:
+- User knows something happened (not silent)
+- Can see where data was in context
+- Warning educates about the policy
+- Logged to `security_events` for monitoring
+
+### Design Decision: Specific Patterns
+
+**Decision**: Target specific sensitive data patterns, not broad numeric detection.
+
+**Patterns Stripped**:
+| Pattern | Regex | Example |
+|---------|-------|---------|
+| Credit card | `\b(?:\d[ -]*?){13,19}\b` | 4111-1111-1111-1111 |
+| SSN | `\b\d{3}-?\d{2}-?\d{4}\b` | 123-45-6789 |
+
+**NOT Stripped** (false positive prevention):
+- Phone numbers (different format: `(256) 555-1234`)
+- Zip codes (5 or 9 digits)
+- Invoice/ticket IDs
+- Dates
+
+### Columns Protected
+
+**Notes fields:**
+- `customers.notes`
+- `tickets.notes`
+- `leads.raw_notes`
+- `notes.content`
+
+**Message fields:**
+- `scheduled_messages.body`
+
+---
+
 ## Appendix A: Terminology
 
 | Term | Definition |
@@ -1041,6 +1107,9 @@ Invoice send requested
 | 2025-01-07 | Webhook-driven payment status | Stripe pushes events; no polling required |
 | 2025-01-07 | Stripe Customer lazy creation | Create on first invoice send, link via stripe_customer_id |
 | 2025-01-07 | Store reference IDs only | stripe_customer_id, stripe_checkout_session_id, stripe_payment_intent_id |
+| 2025-01-07 | Ticket-level estimated pricing flag | Simple boolean, shows "Estimated" in UI/emails, requires confirmation at close-out |
+| 2025-01-07 | Three-layer input sanitization | Frontend + backend + DB triggers for notes/messages only |
+| 2025-01-07 | Visible redaction with warning | Replace with [REDACTED], show user warning, log to security_events |
 
 ---
 

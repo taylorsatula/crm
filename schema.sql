@@ -299,6 +299,9 @@ CREATE TABLE tickets (
     notes TEXT,
     closed_at TIMESTAMPTZ,
 
+    -- Pricing
+    is_price_estimated BOOLEAN NOT NULL DEFAULT false,  -- Shows "Estimated" in UI/emails, requires confirmation at close-out
+
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -907,6 +910,118 @@ CREATE POLICY auth_queue_isolation ON model_authorization_queue FOR ALL
 
 CREATE POLICY auth_queue_insert ON model_authorization_queue FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+
+
+-- =============================================================================
+-- SECTION 10: Input Sanitization Triggers
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- sanitize_sensitive_data()
+-- -----------------------------------------------------------------------------
+-- Defense-in-depth: Strip credit card numbers and SSNs from freeform text
+-- fields. Last line of defense - backend middleware is primary sanitizer.
+-- Uses [REDACTED] replacement so user can see something was removed.
+-- -----------------------------------------------------------------------------
+
+-- Generic function that sanitizes a given text value
+CREATE OR REPLACE FUNCTION sanitize_text(input_text TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    IF input_text IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    -- Credit card pattern: 13-19 digits with optional spaces/dashes
+    -- Uses word boundaries to avoid matching inside longer numbers
+    input_text := regexp_replace(
+        input_text,
+        '\m(\d[ -]*){13,19}\M',
+        '[REDACTED]',
+        'g'
+    );
+
+    -- SSN pattern: XXX-XX-XXXX or XXXXXXXXX
+    input_text := regexp_replace(
+        input_text,
+        '\m\d{3}-?\d{2}-?\d{4}\M',
+        '[REDACTED]',
+        'g'
+    );
+
+    RETURN input_text;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+
+-- Trigger function for customers.notes
+CREATE OR REPLACE FUNCTION sanitize_customers_notes()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.notes := sanitize_text(NEW.notes);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sanitize_customers_notes
+    BEFORE INSERT OR UPDATE ON customers
+    FOR EACH ROW EXECUTE FUNCTION sanitize_customers_notes();
+
+
+-- Trigger function for tickets.notes
+CREATE OR REPLACE FUNCTION sanitize_tickets_notes()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.notes := sanitize_text(NEW.notes);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sanitize_tickets_notes
+    BEFORE INSERT OR UPDATE ON tickets
+    FOR EACH ROW EXECUTE FUNCTION sanitize_tickets_notes();
+
+
+-- Trigger function for leads.raw_notes
+CREATE OR REPLACE FUNCTION sanitize_leads_notes()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.raw_notes := sanitize_text(NEW.raw_notes);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sanitize_leads_notes
+    BEFORE INSERT OR UPDATE ON leads
+    FOR EACH ROW EXECUTE FUNCTION sanitize_leads_notes();
+
+
+-- Trigger function for notes.content
+CREATE OR REPLACE FUNCTION sanitize_notes_content()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.content := sanitize_text(NEW.content);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sanitize_notes_content
+    BEFORE INSERT OR UPDATE ON notes
+    FOR EACH ROW EXECUTE FUNCTION sanitize_notes_content();
+
+
+-- Trigger function for scheduled_messages.body
+CREATE OR REPLACE FUNCTION sanitize_messages_body()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.body := sanitize_text(NEW.body);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sanitize_messages_body
+    BEFORE INSERT OR UPDATE ON scheduled_messages
+    FOR EACH ROW EXECUTE FUNCTION sanitize_messages_body();
 
 
 -- =============================================================================

@@ -504,6 +504,78 @@
 
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
+║                       INPUT SANITIZATION WATERFALL                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PARALLEL TRACK (Can develop alongside Phase 3-4)                            │
+│  Defense-in-depth: strip CC/SSN from notes/messages at all layers            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────┐
+    │  core/           │
+    │  sanitizer.py    │
+    │                  │
+    │  Regex patterns  │
+    │  - CC: 13-19 dig │
+    │  - SSN: XXX-XX-  │
+    │    XXXX          │
+    │  strip_sensitive │
+    │  ()              │
+    │                  │
+    │  NO DEPS         │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  api/            │
+    │  middleware/     │
+    │  sanitize.py     │
+    │                  │
+    │  Sanitize notes/ │
+    │  message fields  │
+    │  in request body │
+    │  Log detections  │
+    │  to security_    │
+    │  events          │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - sanitizer     │
+    │  - postgres_     │
+    │    client        │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  Database triggers (schema.sql):                         │
+    │                                                          │
+    │  sanitize_sensitive_data() function                      │
+    │  Applied to:                                             │
+    │    - customers.notes                                     │
+    │    - tickets.notes                                       │
+    │    - leads.raw_notes                                     │
+    │    - notes.content                                       │
+    │    - scheduled_messages.body                             │
+    │                                                          │
+    │  Last line of defense - catches anything backend missed  │
+    └────────────────────────────────────────────────────────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  static/js/      │
+    │  sanitizer.js    │
+    │                  │
+    │  Client-side     │
+    │  same patterns   │
+    │  Strip on blur   │
+    │  Show warning    │
+    │  toast           │
+    │                  │
+    │  NO DEPS         │
+    └──────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
 ║                              FRONTEND WATERFALL                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
