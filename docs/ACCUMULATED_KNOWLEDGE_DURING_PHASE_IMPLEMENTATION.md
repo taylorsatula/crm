@@ -223,7 +223,6 @@ with user_context(some_user_id):
 | Spec Said | We Did | Why |
 |-----------|--------|-----|
 | Token auth | AppRole auth | Tokens expire, AppRole is for apps |
-| psycopg3 | psycopg2 | Mature, ThreadedConnectionPool built-in |
 | Explicit user_id param | Contextvar automatic | Ambient context, no parameter threading |
 | VaultError wrapper | No wrapper | Let redis.ConnectionError propagate |
 

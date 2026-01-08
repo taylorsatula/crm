@@ -95,6 +95,19 @@ class ValkeyClient:
         """
         return self._client.ttl(key)
 
+    def expire(self, key: str, seconds: int) -> bool:
+        """
+        Set expiration on existing key.
+
+        Args:
+            key: Key to set expiration on
+            seconds: TTL in seconds
+
+        Returns:
+            True if expiration was set, False if key doesn't exist.
+        """
+        return self._client.expire(key, seconds)
+
     def incr(self, key: str) -> int:
         """
         Increment key by 1.

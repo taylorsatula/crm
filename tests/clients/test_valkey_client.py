@@ -75,6 +75,21 @@ class TestExpiration:
         assert valkey.ttl("test:noexpiry") == -1
         valkey.delete("test:noexpiry")
 
+    def test_expire_sets_ttl_on_existing_key(self, valkey):
+        """Expire sets TTL on existing key without expiry."""
+        valkey.set("test:expire_later", "value")
+        assert valkey.ttl("test:expire_later") == -1  # No expiry initially
+        result = valkey.expire("test:expire_later", 60)
+        assert result is True
+        ttl = valkey.ttl("test:expire_later")
+        assert 55 <= ttl <= 60
+        valkey.delete("test:expire_later")
+
+    def test_expire_returns_false_for_missing_key(self, valkey):
+        """Expire returns False when key doesn't exist."""
+        result = valkey.expire("test:nonexistent:expire", 60)
+        assert result is False
+
 
 class TestCounter:
     """Increment operations."""

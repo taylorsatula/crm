@@ -117,8 +117,8 @@ class TestUserIsolation:
 
         # Without context, query fails - empty string can't cast to UUID
         # This is intentional fail-fast behavior
-        import psycopg2
-        with pytest.raises(psycopg2.errors.InvalidTextRepresentation):
+        import psycopg
+        with pytest.raises(psycopg.errors.InvalidTextRepresentation):
             db.execute("SELECT first_name FROM customers")
 
     def test_cannot_see_other_users_data_by_id(self, db):

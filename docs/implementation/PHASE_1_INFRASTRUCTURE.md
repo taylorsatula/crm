@@ -4,7 +4,7 @@
 **Goal**: Establish connections to external services with proper error handling and fail-fast behavior.
 
 **Files created**: 3
-**Tests**: 38 passing
+**Tests**: 40 passing
 **Dependencies**: Phase 0 complete, external services running
 
 ---
@@ -86,7 +86,7 @@ secret/crm/stripe
 
 ### Implementation Notes
 
-**psycopg2 with ThreadedConnectionPool**: Uses psycopg2 (not psycopg3) for compatibility. Class-level connection pools are shared across instances keyed by database URL.
+**psycopg3 with ConnectionPool**: Uses psycopg3 for modern API and better typing. Class-level connection pools are shared across instances keyed by database URL.
 
 **Automatic RLS Context**: Reads user ID from `utils.user_context._current_user_id` contextvar on every `get_connection()` call. No explicit user_id parameter needed.
 
@@ -96,7 +96,7 @@ secret/crm/stripe
 
 | Decision | Rationale |
 |----------|-----------|
-| psycopg2 over psycopg3 | Mature, widely deployed, ThreadedConnectionPool built-in |
+| psycopg3 over psycopg2 | Modern API, better typing, native async support, actively maintained |
 | Contextvar for user ID | Ambient context - no parameter threading through call stack |
 | Empty string on no context | UUID cast fails = fail-fast on RLS tables |
 | Class-level pool sharing | Multiple PostgresClient instances share same pool per URL |
@@ -158,16 +158,17 @@ With admin connection (db_admin fixture):
 | `delete(key)` | `bool` | True if key existed |
 | `exists(key)` | `bool` | Key existence check |
 | `ttl(key)` | `int` | -2 missing, -1 no expiry, else seconds |
+| `expire(key, seconds)` | `bool` | Set TTL on existing key |
 | `incr(key)` | `int` | Creates with 1 if missing |
 | `set_json(key, value, expire_seconds)` | None | JSON serialization |
 | `get_json(key)` | `dict \| list \| None` | Raises ValueError on invalid JSON |
 | `ping()` | `bool` | Health check |
 
-### Tests (17 passing)
+### Tests (19 passing)
 
 - `TestValkeyClientInit`: connects with valid URL
 - `TestBasicOperations`: set/get, get missing returns None, delete returns bool, exists
-- `TestExpiration`: set with expiration, TTL returns remaining, TTL -2 for missing, TTL -1 for no expiry
+- `TestExpiration`: set with expiration, TTL returns remaining, TTL -2 for missing, TTL -1 for no expiry, expire sets TTL on existing key, expire returns false for missing key
 - `TestCounter`: incr creates with 1, incr increments
 - `TestJsonHelpers`: JSON roundtrip, get_json missing returns None, get_json invalid raises ValueError
 - `TestHealthCheck`: ping returns True
@@ -184,7 +185,7 @@ With admin connection (db_admin fixture):
 - [x] Valkey running and accessible
 - [x] `pytest tests/clients/test_vault_client.py` - 9 tests pass
 - [x] `pytest tests/clients/test_postgres_client.py` - 12 tests pass
-- [x] `pytest tests/clients/test_valkey_client.py` - 17 tests pass
+- [x] `pytest tests/clients/test_valkey_client.py` - 19 tests pass
 
 ### Integration Check
 
