@@ -733,36 +733,15 @@ This link will expire in {minutes_remaining} minutes.
 If you didn't request this email, you can safely ignore it.
         """.strip()
 
-        # HTML version
+        # HTML version (styled button + fallback link)
         html_body = f"""
 <!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-</head>
-<body style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+<html><body style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px;">
     <h2>Sign in to {self.config.app_name}</h2>
-    <p>Click the button below to sign in:</p>
-    <p style="margin: 30px 0;">
-        <a href="{link}"
-           style="background-color: #0066cc; color: white; padding: 12px 24px;
-                  text-decoration: none; border-radius: 4px; display: inline-block;">
-            Sign In
-        </a>
-    </p>
-    <p style="color: #666; font-size: 14px;">
-        This link will expire in {minutes_remaining} minutes.
-    </p>
-    <p style="color: #666; font-size: 14px;">
-        If you didn't request this email, you can safely ignore it.
-    </p>
-    <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-    <p style="color: #999; font-size: 12px;">
-        If the button doesn't work, copy and paste this link:<br>
-        <a href="{link}" style="color: #0066cc;">{link}</a>
-    </p>
-</body>
-</html>
+    <p><a href="{link}" style="background:#0066cc; color:white; padding:12px 24px; text-decoration:none; border-radius:4px;">Sign In</a></p>
+    <p style="color:#666; font-size:14px;">Expires in {minutes_remaining} min. Ignore if you didn't request this.</p>
+    <p style="color:#999; font-size:12px;">Fallback: <a href="{link}">{link}</a></p>
+</body></html>
         """.strip()
 
         self._send_email(
@@ -772,34 +751,9 @@ If you didn't request this email, you can safely ignore it.
             html_body=html_body
         )
 
-    def _send_email(
-        self,
-        to: str,
-        subject: str,
-        text_body: str,
-        html_body: str
-    ) -> None:
-        """
-        Actually send the email via provider.
-
-        Implement based on chosen provider.
-        """
-        # Example for Resend:
-        #
-        # import resend
-        # resend.api_key = self.api_key
-        #
-        # try:
-        #     resend.Emails.send({
-        #         "from": self.from_address,
-        #         "to": to,
-        #         "subject": subject,
-        #         "text": text_body,
-        #         "html": html_body
-        #     })
-        # except resend.ResendError as e:
-        #     raise EmailError(f"Failed to send email: {e}")
-
+    def _send_email(self, to: str, subject: str, text_body: str, html_body: str) -> None:
+        """Send email via provider. Implement for your provider (Resend, SendGrid, etc.)."""
+        # Provider-specific: resend.Emails.send({from, to, subject, text, html})
         raise NotImplementedError("Implement _send_email for your email provider")
 ```
 

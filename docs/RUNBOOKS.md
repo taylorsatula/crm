@@ -205,38 +205,29 @@ Add action handler if needed (see "How to Add a New Action" below).
 
 ### 5. Write Tests
 
-Create `tests/test_product_service.py`:
+Create `tests/test_product_service.py` covering:
 
 ```python
-import pytest
-from uuid import uuid4
+# Test file structure - all tests use `user_context` fixture for RLS
 
-def test_create_product(product_service, user_context):
-    with user_context(uuid4()):
-        product = product_service.create(ProductCreate(name="Screen", price=Decimal("5.00")))
-        assert product.name == "Screen"
-        assert product.price == Decimal("5.00")
+def test_create_product(...)       # Create and verify fields returned
+def test_get_product_not_found(...) # get_by_id returns None for missing
+def test_update_product(...)       # Partial update with exclude_unset
+def test_delete_product(...)       # Soft delete sets deleted_at
 
-def test_get_product_not_found(product_service, user_context):
-    with user_context(uuid4()):
-        assert product_service.get_by_id(uuid4()) is None
-
-def test_update_product(product_service, user_context):
-    with user_context(uuid4()):
-        product = product_service.create(ProductCreate(name="Screen", price=Decimal("5.00")))
-        updated = product_service.update(product.id, ProductUpdate(price=Decimal("6.00")))
-        assert updated.price == Decimal("6.00")
-
+# Critical: RLS isolation test
 def test_rls_isolation(product_service, user_context):
+    """User A creates item, User B cannot see it."""
     user_a, user_b = uuid4(), uuid4()
 
     with user_context(user_a):
         product = product_service.create(ProductCreate(name="A's Product", price=Decimal("10.00")))
 
     with user_context(user_b):
-        # User B should not see User A's product
-        assert product_service.get_by_id(product.id) is None
+        assert product_service.get_by_id(product.id) is None  # RLS filters
 ```
+
+The RLS test is mandatory - it verifies user isolation works correctly.
 
 ### 6. Update Phase Docs
 
@@ -582,46 +573,26 @@ EXPLAIN ANALYZE SELECT * FROM tickets WHERE customer_id = '...';
 
 ## How to Add RLS to a New Table
 
-Every user-scoped table needs RLS.
+Every user-scoped table needs RLS. See `PHASE_1_INFRASTRUCTURE.md` for the authoritative explanation of RLS context injection.
 
-### 1. Enable RLS
+### Quick Reference
 
 ```sql
+-- 1. Enable RLS
 ALTER TABLE your_table ENABLE ROW LEVEL SECURITY;
-```
 
-### 2. Create Policies
-
-```sql
--- Read/Update/Delete: only own data, exclude soft-deleted
+-- 2. Isolation policy (read/update/delete)
 CREATE POLICY your_table_isolation ON your_table FOR ALL
-    USING (
-        user_id = current_setting('app.current_user_id', true)::uuid
-        AND deleted_at IS NULL  -- if soft delete
-    );
+    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
 
--- Insert: can only insert own data
+-- 3. Insert policy
 CREATE POLICY your_table_insert ON your_table FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 ```
 
-### 3. Test Isolation
+### Test Isolation (Mandatory)
 
-```python
-def test_rls_isolation(service, user_context):
-    user_a, user_b = uuid4(), uuid4()
-
-    with user_context(user_a):
-        item = service.create(...)
-
-    with user_context(user_b):
-        # User B should NOT see User A's item
-        assert service.get_by_id(item.id) is None
-
-        # User B's list should be empty
-        result = service.list()
-        assert len(result.items) == 0
-```
+See the RLS isolation test pattern in "How to Add a New Entity" above - every entity needs this test.
 
 ---
 

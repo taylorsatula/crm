@@ -361,97 +361,32 @@ After all phases, verify the complete structure:
 
 ```
 crm/
-├── main.py                          # Application entry point
-├── config.py                        # App configuration
-├── requirements.txt                 # Python dependencies
+├── main.py                     # Entry point
+├── config.py
+├── requirements.txt
 ├── api/
-│   ├── __init__.py
-│   ├── base.py                      # Response format, error codes
-│   ├── health.py                    # Health check routes
-│   ├── data.py                      # Read operations
-│   ├── actions.py                   # Write operations
-│   ├── middleware.py                # Request ID middleware
-│   └── errors.py                    # Exception handlers
-├── auth/
-│   ├── __init__.py
-│   ├── types.py                     # Pydantic models
-│   ├── exceptions.py                # Auth exceptions
-│   ├── config.py                    # Auth configuration
-│   ├── database.py                  # Auth database operations
-│   ├── rate_limiter.py              # Rate limiting
-│   ├── security_logger.py           # Security event logging
-│   ├── session.py                   # Session management
-│   ├── email_service.py             # Magic link emails
-│   ├── service.py                   # Auth orchestration
-│   ├── security_middleware.py       # Auth middleware
-│   └── api.py                       # Auth HTTP routes
-├── clients/
-│   ├── __init__.py
-│   ├── vault_client.py              # HashiCorp Vault
-│   ├── postgres_client.py           # PostgreSQL with RLS
-│   ├── valkey_client.py             # Valkey/Redis
-│   └── llm_client.py                # LLM provider interface
+│   ├── base.py                 # Response format, error codes
+│   ├── health.py, data.py, actions.py
+│   ├── middleware.py, errors.py
+├── auth/                       # Magic link auth system
+│   ├── types.py, exceptions.py, config.py
+│   ├── database.py, rate_limiter.py, security_logger.py
+│   ├── session.py, email_service.py, service.py
+│   └── security_middleware.py, api.py
+├── clients/                    # External service clients
+│   ├── vault_client.py         # Secrets management
+│   ├── postgres_client.py      # PostgreSQL with RLS
+│   ├── valkey_client.py, llm_client.py
 ├── core/
-│   ├── __init__.py
-│   ├── audit.py                     # Audit trail
-│   ├── extraction.py                # LLM attribute extraction
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── contact.py
-│   │   ├── address.py
-│   │   ├── service.py
-│   │   ├── ticket.py
-│   │   ├── line_item.py
-│   │   ├── invoice.py
-│   │   ├── note.py
-│   │   ├── attribute.py
-│   │   └── scheduled_message.py
-│   └── services/
-│       ├── __init__.py
-│       ├── contact_service.py
-│       ├── address_service.py
-│       ├── catalog_service.py
-│       ├── ticket_service.py
-│       ├── invoice_service.py
-│       ├── note_service.py
-│       ├── attribute_service.py
-│       └── message_service.py
+│   ├── audit.py, extraction.py
+│   ├── models/                 # Pydantic models per entity
+│   └── services/               # Business logic per entity
 ├── utils/
-│   ├── __init__.py
-│   ├── timezone.py                  # UTC utilities
-│   ├── user_context.py              # User context propagation
-│   └── pagination.py                # Cursor pagination
-├── templates/                       # Jinja2 templates
-│   ├── base.html
-│   ├── auth/
-│   ├── calendar/
-│   ├── contacts/
-│   └── tickets/
-├── static/                          # Static assets
-│   ├── css/
-│   └── js/
-├── tests/                           # Test suite
-│   ├── conftest.py
-│   ├── test_timezone.py
-│   ├── test_user_context.py
-│   ├── test_vault_client.py
-│   ├── test_postgres_client.py
-│   ├── test_valkey_client.py
-│   ├── test_auth_*.py
-│   ├── test_contact_service.py
-│   ├── test_ticket_service.py
-│   └── ...
-└── docs/
-    ├── ARCHITECTURE_DECISION_RECORD.md
-    ├── IMPLEMENTATION_WATERFALL.md
-    └── implementation/
-        ├── README.md
-        ├── PHASE_0_FOUNDATION.md
-        ├── PHASE_1_INFRASTRUCTURE.md
-        ├── PHASE_2_AUTH.md
-        ├── PHASE_3_CORE_DOMAIN.md
-        ├── PHASE_4_API_ROUTES.md
-        └── PHASE_5_ASSEMBLY.md
+│   ├── timezone.py, user_context.py, pagination.py
+├── templates/                  # Jinja2 (auth/, calendar/, contacts/, tickets/)
+├── static/                     # CSS, JS
+├── tests/                      # Test suite (test_*.py)
+└── docs/                       # ADR, waterfall, phase docs
 ```
 
 ---

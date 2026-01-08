@@ -720,31 +720,15 @@ Group customers by geographic area for route planning and regional analytics. Im
 
 ## Part 9: Reference Architecture (MIRA)
 
-### Why MIRA Matters
+MIRA is a separate project demonstrating patterns we adopt: PostgreSQL RLS, raw SQL, actions/data API split, magic link auth, context variable propagation.
 
-MIRA is a separate project by the same developer that demonstrates many of the patterns we want to adopt. It's a conversational AI system with:
+**Patterns from MIRA:**
+- `APIResponse` dataclass: `{success, data, error, meta}` structure
+- Domain handlers with declarative operation definitions
+- Connection pooling with explicit RLS context setting
+- Context variables for user identity through call stack
 
-- Event-driven architecture
-- PostgreSQL with RLS for user isolation
-- Raw SQL over ORM
-- Clean API patterns (actions/data split)
-- Magic link authentication
-
-We're not copying MIRA wholesale, but it serves as a reference for how these patterns work in practice.
-
-### Patterns to Adopt
-
-**API Response Format**
-MIRA's `APIResponse` dataclass with `{success, data, error, meta}` structure. Consistent across all endpoints.
-
-**Domain Handlers**
-Actions route to domain-specific handlers that define their available operations declaratively. Validation is separated from execution.
-
-**Database Client**
-Connection pooling with explicit RLS context setting. Clear about when connections are acquired and released.
-
-**User Context Propagation**
-Context variables carry user identity through the call stack. Set once at the API boundary, automatically available to all downstream code.
+See Appendix C for specific file references.
 
 ---
 
@@ -1129,38 +1113,15 @@ Key files in the MIRA codebase that demonstrate referenced patterns:
 
 ## Appendix D: Example Ticket Lifecycle
 
-A complete example showing ticket flow:
+Example: Jane Smith, 123 Main Street, Madison AL. Int/Ext Window Cleaning (flexible) + Screen Cleaning x20. Technician: Taylor.
 
-**1. Creation**
-```
-Customer: Jane Smith
-Address: 123 Main Street, Madison, AL 35758
-Service: Interior and Exterior Window Cleaning (flexible)
-Scheduled: 2024-01-15 9:00 AM
-Technician: Taylor
-```
+**Pre-Service** (automated):
+- Confirmation email sent → Jane clicks Accept → stops follow-up sequence
+- Day-before reminder: "Your appointment is tomorrow at 9:00 AM"
 
-**2. Appointment Confirmation Sent**
-```
-Email to Jane with Accept/Decline/Request Modify links
-Jane clicks Accept
-System marks confirmed, stops follow-up sequence
-```
+**Day Of**: Technician clock-in → work performed → clock-out (duration: 3h22m)
 
-**3. Day Before Reminder**
-```
-Automated email: "Your appointment is tomorrow at 9:00 AM"
-```
-
-**4. Day Of**
-```
-Technician arrives, taps clock-in
-Work performed
-Technician taps clock-out
-Duration recorded: 3h 22m
-```
-
-**5. Close-Out Flow**
+**Close-Out Flow** (critical - see Part 4 for full details):
 ```
 Technician opens current ticket (surfaced as quick-action)
 Taps "Close Out"
@@ -1175,31 +1136,10 @@ Reviews confirmation page with extracted attributes:
   - property_note: keep gate closed
   - equipment_needed: extension ladder
   - property_detail: complex 2nd story sill
-Presses "Complete Ticket"
-Ticket becomes immutable
+Presses "Complete Ticket" → Ticket becomes immutable
 ```
 
-**6. Invoice**
-```
-Technician selects "Send Remote Invoice"
-Invoice created from ticket
-Email sent to Jane with payment link
-```
-
-**7. Scheduled Follow-Up**
-```
-Scheduled message created: Send in 6 months
-July 2024: Automated email sent suggesting booking
-```
-
-**8. Next Year's Scheduling**
-```
-When booking Jane again, technician sees:
-- Last service: 3h22m
-- Notes: extension ladder needed, 2nd story sill complexity
-- Preferences: (none recorded yet)
-Can confidently schedule 4-hour block
-```
+**Post-Service**: Remote invoice emailed → Scheduled message queued for 6 months → Next year: technician sees service history, can confidently schedule 4-hour block
 
 ---
 

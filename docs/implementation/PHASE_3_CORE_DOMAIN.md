@@ -17,8 +17,17 @@ Before starting Phase 3, ensure:
 
 ### Required Database Schema
 
+**RLS Pattern (applied to all user-scoped tables):**
 ```sql
--- Contacts (customers)
+-- Enable RLS and create isolation policy
+ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
+CREATE POLICY user_isolation ON {table}
+    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
+-- Note: Omit "AND deleted_at IS NULL" for tables without soft delete
+```
+
+```sql
+-- Contacts (customers) [RLS: user_id + soft delete]
 CREATE TABLE contacts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -31,11 +40,7 @@ CREATE TABLE contacts (
     deleted_at TIMESTAMPTZ  -- Soft delete
 );
 
-ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON contacts
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Addresses (service locations)
+-- Addresses (service locations) [RLS: user_id only, no soft delete]
 CREATE TABLE addresses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -50,11 +55,7 @@ CREATE TABLE addresses (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE addresses ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON addresses
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid);
-
--- Services (catalog items)
+-- Services (catalog items) [RLS: user_id + soft delete]
 CREATE TABLE services (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -70,11 +71,7 @@ CREATE TABLE services (
     deleted_at TIMESTAMPTZ
 );
 
-ALTER TABLE services ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON services
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Tickets (appointments/jobs)
+-- Tickets (appointments/jobs) [RLS: user_id + soft delete]
 CREATE TABLE tickets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -93,11 +90,7 @@ CREATE TABLE tickets (
     deleted_at TIMESTAMPTZ
 );
 
-ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON tickets
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Line items (services on a ticket)
+-- Line items (services on a ticket) [RLS: user_id + soft delete]
 CREATE TABLE line_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -113,11 +106,7 @@ CREATE TABLE line_items (
     deleted_at TIMESTAMPTZ
 );
 
-ALTER TABLE line_items ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON line_items
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Invoices
+-- Invoices [RLS: user_id + soft delete]
 CREATE TABLE invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -132,11 +121,7 @@ CREATE TABLE invoices (
     deleted_at TIMESTAMPTZ
 );
 
-ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON invoices
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Notes (attached to contacts or tickets)
+-- Notes (attached to contacts or tickets) [RLS: user_id + soft delete]
 CREATE TABLE notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -145,33 +130,23 @@ CREATE TABLE notes (
     content TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ,
-
     CONSTRAINT notes_has_parent CHECK (contact_id IS NOT NULL OR ticket_id IS NOT NULL)
 );
 
-ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON notes
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid AND deleted_at IS NULL);
-
--- Attributes (structured data derived from notes)
+-- Attributes (structured data from notes) [RLS: user_id only]
 CREATE TABLE attributes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
     contact_id UUID NOT NULL REFERENCES contacts(id),
     key TEXT NOT NULL,
     value JSONB NOT NULL,
-    source_note_id UUID REFERENCES notes(id),  -- Which note this came from
+    source_note_id UUID REFERENCES notes(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
     UNIQUE(contact_id, key)  -- One value per key per contact
 );
 
-ALTER TABLE attributes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON attributes
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid);
-
--- Audit log (universal change tracking)
+-- Audit log (NO RLS - append-only, admin-accessible)
 CREATE TABLE audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL,
@@ -181,12 +156,10 @@ CREATE TABLE audit_log (
     changes JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- No RLS on audit_log - it's append-only and admin-accessible
 CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_log_user ON audit_log(user_id);
 
--- Scheduled messages
+-- Scheduled messages [RLS: user_id only]
 CREATE TABLE scheduled_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
@@ -199,10 +172,6 @@ CREATE TABLE scheduled_messages (
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-ALTER TABLE scheduled_messages ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON scheduled_messages
-    FOR ALL USING (user_id = current_setting('app.current_user_id')::uuid);
 ```
 
 ---
@@ -480,40 +449,7 @@ def create_next_cursor(
     return cursor.encode()
 ```
 
-### Usage Pattern
-
-```python
-def list_contacts(
-    self,
-    limit: int = 20,
-    cursor: str | None = None
-) -> PaginatedResult:
-    """List contacts with cursor pagination."""
-
-    # Decode cursor if provided
-    cursor_obj = Cursor.decode(cursor) if cursor else None
-
-    # Build query - fetch one extra to detect if there's more
-    base_query = "SELECT * FROM contacts"
-    query, params = build_cursor_query(base_query, cursor_obj)
-    query += f" LIMIT %s"
-    params.append(limit + 1)
-
-    results = self.postgres.execute(query, tuple(params))
-
-    # Check if there's more
-    has_more = len(results) > limit
-    items = results[:limit]  # Return only requested amount
-
-    # Create next cursor
-    next_cursor = create_next_cursor(results, limit) if has_more else None
-
-    return PaginatedResult(
-        items=items,
-        next_cursor=next_cursor,
-        has_more=has_more
-    )
-```
+**Usage:** See `ContactService.list()` in section 3.4 for complete implementation using these utilities.
 
 ---
 

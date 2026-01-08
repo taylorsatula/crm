@@ -55,29 +55,18 @@ def create_health_router(
         checks = {}
         all_healthy = True
 
-        # Database check
-        try:
-            postgres.health_check()
-            checks["database"] = {"status": "healthy"}
-        except PostgresError as e:
-            checks["database"] = {"status": "unhealthy", "error": str(e)}
-            all_healthy = False
-
-        # Cache check
-        try:
-            valkey.health_check()
-            checks["cache"] = {"status": "healthy"}
-        except ValkeyError as e:
-            checks["cache"] = {"status": "unhealthy", "error": str(e)}
-            all_healthy = False
-
-        # Vault check
-        try:
-            vault.health_check()
-            checks["vault"] = {"status": "healthy"}
-        except VaultError as e:
-            checks["vault"] = {"status": "unhealthy", "error": str(e)}
-            all_healthy = False
+        # Same pattern for each dependency: try health_check(), catch specific error
+        for name, client, error_type in [
+            ("database", postgres, PostgresError),
+            ("cache", valkey, ValkeyError),
+            ("vault", vault, VaultError),
+        ]:
+            try:
+                client.health_check()
+                checks[name] = {"status": "healthy"}
+            except error_type as e:
+                checks[name] = {"status": "unhealthy", "error": str(e)}
+                all_healthy = False
 
         if all_healthy:
             return success_response({"status": "healthy", "checks": checks})
@@ -393,6 +382,7 @@ def create_actions_router(handlers: dict) -> APIRouter:
 
 
 # Domain-specific action handlers
+# Pattern: thin wrapper that validates params, calls service, returns model_dump()
 
 class ContactActionHandler:
     """Action handler for contact domain."""
@@ -401,57 +391,23 @@ class ContactActionHandler:
         self.contact_service = contact_service
         self.address_service = address_service
 
-    def create(
-        self,
-        name: str,
-        email: str | None = None,
-        phone: str | None = None,
-        notes: str | None = None
-    ) -> dict:
+    def create(self, name: str, email: str | None = None, phone: str | None = None, notes: str | None = None) -> dict:
         """Create a new contact."""
         from core.models.contact import ContactCreate
         data = ContactCreate(name=name, email=email, phone=phone, notes=notes)
-        contact = self.contact_service.create(data)
-        return contact.model_dump(mode="json")
+        return self.contact_service.create(data).model_dump(mode="json")
 
-    def update(
-        self,
-        contact_id: str,
-        name: str | None = None,
-        email: str | None = None,
-        phone: str | None = None,
-        notes: str | None = None
-    ) -> dict:
-        """Update contact fields."""
+    def update(self, contact_id: str, **fields) -> dict:
+        """Update contact fields. Same pattern as create()."""
         from core.models.contact import ContactUpdate
-        data = ContactUpdate(name=name, email=email, phone=phone, notes=notes)
-        contact = self.contact_service.update(UUID(contact_id), data)
-        return contact.model_dump(mode="json")
+        return self.contact_service.update(UUID(contact_id), ContactUpdate(**fields)).model_dump(mode="json")
 
     def delete(self, contact_id: str) -> dict:
         """Delete a contact."""
         self.contact_service.delete(UUID(contact_id))
         return {"deleted": True, "contact_id": contact_id}
 
-    def add_address(
-        self,
-        contact_id: str,
-        street: str,
-        city: str,
-        state: str,
-        zip: str,
-        label: str | None = None,
-        notes: str | None = None
-    ) -> dict:
-        """Add address to contact."""
-        from core.models.address import AddressCreate
-        data = AddressCreate(
-            contact_id=UUID(contact_id),
-            street=street, city=city, state=state, zip=zip,
-            label=label, notes=notes
-        )
-        address = self.address_service.create(data)
-        return address.model_dump(mode="json")
+    # Additional methods follow same pattern: add_address, etc.
 
 
 class TicketActionHandler:
@@ -461,109 +417,42 @@ class TicketActionHandler:
         self.ticket_service = ticket_service
         self.line_item_service = line_item_service
 
-    def create(
-        self,
-        contact_id: str,
-        address_id: str,
-        scheduled_at: str,
-        scheduled_duration_minutes: int | None = None
-    ) -> dict:
-        """Create a new ticket."""
+    # Simple CRUD methods follow ContactActionHandler pattern
+    def create(self, contact_id: str, address_id: str, scheduled_at: str, scheduled_duration_minutes: int | None = None) -> dict:
         from core.models.ticket import TicketCreate
         from utils.timezone import parse_iso
-
-        data = TicketCreate(
-            contact_id=UUID(contact_id),
-            address_id=UUID(address_id),
-            scheduled_at=parse_iso(scheduled_at),
-            scheduled_duration_minutes=scheduled_duration_minutes
-        )
-        ticket = self.ticket_service.create(data)
-        return ticket.model_dump(mode="json")
+        data = TicketCreate(contact_id=UUID(contact_id), address_id=UUID(address_id),
+                           scheduled_at=parse_iso(scheduled_at), scheduled_duration_minutes=scheduled_duration_minutes)
+        return self.ticket_service.create(data).model_dump(mode="json")
 
     def clock_in(self, ticket_id: str) -> dict:
-        """Clock in to ticket."""
-        ticket = self.ticket_service.clock_in(UUID(ticket_id))
-        return ticket.model_dump(mode="json")
+        return self.ticket_service.clock_in(UUID(ticket_id)).model_dump(mode="json")
 
     def clock_out(self, ticket_id: str) -> dict:
-        """Clock out of ticket."""
-        ticket = self.ticket_service.clock_out(UUID(ticket_id))
-        return ticket.model_dump(mode="json")
+        return self.ticket_service.clock_out(UUID(ticket_id)).model_dump(mode="json")
 
-    def add_line_item(
-        self,
-        ticket_id: str,
-        service_id: str,
-        quantity: int = 1,
-        unit_price: float | None = None,
-        total_price: float | None = None,
-        description: str | None = None,
-        duration_minutes: int | None = None
-    ) -> dict:
-        """Add line item to ticket."""
-        from core.models.line_item import LineItemCreate
-        from decimal import Decimal
-
-        data = LineItemCreate(
-            service_id=UUID(service_id),
-            quantity=quantity,
-            unit_price=Decimal(str(unit_price)) if unit_price else None,
-            total_price=Decimal(str(total_price)) if total_price else None,
-            description=description,
-            duration_minutes=duration_minutes
-        )
-        line_item = self.ticket_service.add_line_item(UUID(ticket_id), data)
-        return line_item.model_dump(mode="json")
-
-    def initiate_close_out(
-        self,
-        ticket_id: str,
-        confirmed_duration_minutes: int,
-        notes: str | None = None
-    ) -> dict:
-        """
-        Start close-out flow.
-
-        Returns extracted attributes for review.
-        """
-        result = self.ticket_service.initiate_close_out(
-            UUID(ticket_id),
-            confirmed_duration_minutes,
-            notes
-        )
+    # Close-out is more complex - two-phase flow
+    def initiate_close_out(self, ticket_id: str, confirmed_duration_minutes: int, notes: str | None = None) -> dict:
+        """Start close-out flow. Returns extracted attributes for review."""
+        result = self.ticket_service.initiate_close_out(UUID(ticket_id), confirmed_duration_minutes, notes)
         return {
             "ticket": result.ticket.model_dump(mode="json"),
             "extracted_attributes": result.extracted_attributes.model_dump() if result.extracted_attributes else None
         }
 
-    def finalize_close_out(
-        self,
-        ticket_id: str,
-        confirmed_attributes: dict,
-        next_service: str,  # "schedule_now", "reach_out", "no_followup"
-        reach_out_months: int | None = None
-    ) -> dict:
-        """
-        Finalize close-out after technician confirms attributes.
-
-        Marks ticket as completed (immutable).
-        """
+    def finalize_close_out(self, ticket_id: str, confirmed_attributes: dict,
+                          next_service: str, reach_out_months: int | None = None) -> dict:
+        """Finalize close-out after technician confirms. Marks ticket as completed (immutable)."""
         from core.services.ticket_service import NextServiceAction
-
-        action = NextServiceAction(next_service)
         ticket = self.ticket_service.finalize_close_out(
-            UUID(ticket_id),
-            confirmed_attributes,
-            action,
-            reach_out_months
+            UUID(ticket_id), confirmed_attributes, NextServiceAction(next_service), reach_out_months
         )
         return ticket.model_dump(mode="json")
 
     def cancel(self, ticket_id: str, reason: str | None = None) -> dict:
-        """Cancel a ticket."""
-        ticket = self.ticket_service.cancel(UUID(ticket_id), reason)
-        return ticket.model_dump(mode="json")
+        return self.ticket_service.cancel(UUID(ticket_id), reason).model_dump(mode="json")
+
+    # Additional methods: add_line_item (same pattern as create)
 ```
 
 ---
@@ -700,20 +589,13 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 ## API Response Examples
 
-### Successful List Response
+All responses follow the same envelope structure:
 
 ```json
 {
-  "success": true,
-  "data": {
-    "items": [
-      {"id": "abc-123", "name": "Jane Smith", "email": "jane@example.com", ...},
-      {"id": "def-456", "name": "John Doe", "email": "john@example.com", ...}
-    ],
-    "next_cursor": "eyJpZCI6ImRlZi00NTYifQ==",
-    "has_more": true
-  },
-  "error": null,
+  "success": true,              // false for errors
+  "data": { ... },              // null for errors; varies by endpoint (see below)
+  "error": null,                // {code, message} for errors
   "meta": {
     "timestamp": "2024-01-15T14:30:00Z",
     "request_id": "req-789"
@@ -721,63 +603,11 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 }
 ```
 
-### Successful Single Entity Response
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "abc-123",
-    "name": "Jane Smith",
-    "email": "jane@example.com",
-    "addresses": [
-      {"id": "addr-1", "street": "123 Main St", ...}
-    ]
-  },
-  "error": null,
-  "meta": {
-    "timestamp": "2024-01-15T14:30:00Z",
-    "request_id": "req-790"
-  }
-}
-```
-
-### Error Response
-
-```json
-{
-  "success": false,
-  "data": null,
-  "error": {
-    "code": "NOT_FOUND",
-    "message": "Contact not found"
-  },
-  "meta": {
-    "timestamp": "2024-01-15T14:30:00Z",
-    "request_id": "req-791"
-  }
-}
-```
-
-### Action Response
-
-```json
-{
-  "success": true,
-  "data": {
-    "ticket": {
-      "id": "ticket-123",
-      "status": "in_progress",
-      "clock_in_at": "2024-01-15T09:00:00Z"
-    }
-  },
-  "error": null,
-  "meta": {
-    "timestamp": "2024-01-15T14:30:00Z",
-    "request_id": "req-792"
-  }
-}
-```
+**Data field variations:**
+- **List**: `{items: [...], next_cursor: "...", has_more: bool}`
+- **Single entity**: The entity object directly (may include nested `addresses`, etc.)
+- **Action result**: Varies by action (e.g., `{ticket: {...}}` for clock_in)
+- **Error**: `data` is null; `error` contains `{code: "NOT_FOUND", message: "..."}`
 
 ---
 
