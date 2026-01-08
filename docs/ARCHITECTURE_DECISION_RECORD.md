@@ -1168,6 +1168,16 @@ Those use cases are addressed by:
 | 2025-01-07 | Session expiry 90 days, magic link 10 minutes | Business requirements override spec defaults |
 | 2025-01-07 | Request IDs always server-generated | Never accept client-provided request IDs |
 | 2025-01-07 | Test structure mirrors source structure | tests/auth/ for auth/, tests/api/ for api/, etc. |
+| 2025-01-08 | VaultClient uses AppRole auth | Tokens expire; AppRole is for long-running applications |
+| 2025-01-08 | Vault paths scoped to crm/ prefix | Caller passes "database", client accesses crm/database - prevents path traversal |
+| 2025-01-08 | PostgresClient reads context from contextvar | Ambient context - no user_id parameter threading through call stack |
+| 2025-01-08 | Empty string for no user context (fail-fast) | UUID cast fails on RLS tables = query errors immediately, not silent empty results |
+| 2025-01-08 | psycopg2 over psycopg3 | Mature, widely deployed, ThreadedConnectionPool built-in |
+| 2025-01-08 | Class-level connection pool sharing | Multiple PostgresClient instances share same pool per database URL |
+| 2025-01-08 | db_admin fixture for test setup | crm_admin with BYPASSRLS for TRUNCATE and test user seeding |
+| 2025-01-08 | Two test users for RLS isolation | TEST_USER_ID and TEST_USER_B_ID enable cross-user visibility tests |
+| 2025-01-08 | load_dotenv with override=True | Shell env may have other project credentials; .env takes precedence |
+| 2025-01-08 | ValkeyClient is minimal redis-py wrapper | No async, no TTL monitoring - just get/set/delete/incr/json helpers |
 
 ---
 

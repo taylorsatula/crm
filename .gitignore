@@ -1,3 +1,7 @@
 __pycache__/
 .pytest_cache/
 .DS_Store
+
+# Environment files with secrets
+.env
+.env.*

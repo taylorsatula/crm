@@ -189,21 +189,123 @@ with user_context(some_user_id):
 
 ---
 
-## Phase 1: Infrastructure Clients (Next)
+## Phase 1: Infrastructure Clients (Complete)
+
+### What Was Built
+
+| File | Purpose |
+|------|---------|
+| `clients/vault_client.py` | HashiCorp Vault with AppRole auth |
+| `clients/postgres_client.py` | ThreadedConnectionPool + automatic RLS from contextvar |
+| `clients/valkey_client.py` | Redis-compatible session/cache store |
+| `tests/clients/test_vault_client.py` | 9 tests |
+| `tests/clients/test_postgres_client.py` | 12 tests |
+| `tests/clients/test_valkey_client.py` | 17 tests |
+
+### Key Learnings
+
+**AppRole over Token**: VaultClient uses AppRole authentication (`VAULT_ROLE_ID` + `VAULT_SECRET_ID`) rather than tokens. Tokens expire; AppRole is designed for applications.
+
+**Path Scoping**: All Vault paths are prefixed with `crm/` internally. Caller passes `"database"`, client accesses `crm/database`. This prevents path traversal attacks.
+
+**Contextvar for RLS**: PostgresClient reads user ID from `utils.user_context._current_user_id` automatically on every connection. No explicit `user_id` parameter needed - context flows from auth middleware through to database.
+
+**Fail-Fast RLS**: When no user context is set, `app.current_user_id` is set to empty string. RLS policies cast this to UUID which fails immediately. This is better than silently returning zero rows - the error is loud and obvious.
+
+**Shell Env Override**: When running outside pytest, shell environment variables may contain credentials from other projects (MIRA). Use `load_dotenv('.env', override=True)` to ensure CRM's credentials are used.
+
+**Two Test Users**: `TEST_USER_ID` and `TEST_USER_B_ID` enable proper RLS isolation testing. User A inserts data, User B queries, should see nothing.
+
+**db_admin Fixture**: Uses `crm_admin` (with BYPASSRLS) for test setup/teardown operations like TRUNCATE. The regular `db` fixture uses `crm_dbuser` with RLS enforced.
+
+### Implementation Deviations from Spec
+
+| Spec Said | We Did | Why |
+|-----------|--------|-----|
+| Token auth | AppRole auth | Tokens expire, AppRole is for apps |
+| psycopg3 | psycopg2 | Mature, ThreadedConnectionPool built-in |
+| Explicit user_id param | Contextvar automatic | Ambient context, no parameter threading |
+| VaultError wrapper | No wrapper | Let redis.ConnectionError propagate |
+
+### Test Infrastructure Updates
+
+**conftest.py now has**:
+```python
+# Two test users for RLS isolation
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+TEST_USER_B_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+# Session-scoped fixtures
+@pytest.fixture(scope="session")
+def db():  # RLS-enforced (crm_dbuser)
+
+@pytest.fixture(scope="session")
+def db_admin():  # Bypasses RLS (crm_admin)
+
+@pytest.fixture(scope="session")
+def valkey():  # ValkeyClient
+
+# Autouse fixture resets DB state before each test
+@pytest.fixture(autouse=True)
+def reset_db_state(db_admin):
+    db_admin.execute("TRUNCATE customers, ... CASCADE")
+    db_admin.execute("INSERT INTO users ...")
+```
+
+### Environment Setup
+
+**.env file** (not committed, in .gitignore):
+```
+VAULT_ADDR=http://127.0.0.1:8200
+VAULT_ROLE_ID=<crm-approle-role-id>
+VAULT_SECRET_ID=<crm-approle-secret-id>
+```
+
+**Vault secrets**:
+```
+secret/crm/database → url, admin_url
+secret/crm/valkey → url
+secret/crm/email → api_key, from_address
+secret/crm/llm → api_key, base_url
+secret/crm/stripe → secret_key, webhook_secret
+```
+
+---
+
+## Common Mistakes to Avoid
+
+1. **Don't create stub files** - Write real implementation directly after tests
+
+2. **Don't test Pydantic's validation works** - Test that YOUR schema rejects bad data
+
+3. **Don't use `pass` with docstrings** - The docstring is the body
+
+4. **Don't accept naive datetimes** - Always require timezone info
+
+5. **Don't use `__all__`** - Explicit imports are clearer
+
+6. **Don't add env var overrides** - Vault or defaults only
+
+7. **Don't let clients set request IDs** - Server generates them
+
+8. **Don't default security-sensitive fields** - Make them required (fail closed)
+
+9. **Don't forget `override=True` in load_dotenv** - Shell env may have other project credentials
+
+10. **Don't use regular db fixture for TRUNCATE** - Use db_admin (crm_admin has BYPASSRLS)
+
+---
+
+## Phase 2: Auth System (Next)
 
 ### What's Coming
-- `clients/vault_client.py` - Secrets management
-- `clients/postgres_client.py` - Connection pool + RLS context
-- `clients/valkey_client.py` - Session store + rate limiting
-
-### Fixtures to Implement
-- Wire up `db_connection` to actual test database
-- Implement `reset_db_state` to truncate + re-seed test user
-- Implement `ensure_test_user` to return User model
+- Magic link authentication
+- Session management
+- Rate limiting
+- Auth middleware
 
 ### Dependencies
-- Vault client first (others depend on it for credentials)
-- Then postgres and valkey in parallel
+- All Phase 1 clients (Vault for secrets, Postgres for users/sessions, Valkey for rate limiting)
 
 ---
 

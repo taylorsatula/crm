@@ -4,10 +4,46 @@
 --
 -- Target: PostgreSQL 16+
 --
--- Run this file to create the complete database schema:
---   psql -U postgres -d crm -f schema.sql
+-- Production deployment:
+--   1. Create database: CREATE DATABASE crm;
+--   2. Connect as superuser: psql -U postgres -d crm -f schema.sql
+--   3. Schema creates users, tables, RLS policies, and grants
+--
+-- Users created:
+--   - crm_admin:  Schema owner, migration executor (password in Vault)
+--   - crm_dbuser: Application user with RLS-enforced queries (password in Vault)
 --
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- User Creation
+-- -----------------------------------------------------------------------------
+-- Create application users if they don't exist.
+-- Passwords MUST be changed via Vault after initial deployment.
+-- -----------------------------------------------------------------------------
+
+DO $$
+BEGIN
+    -- Create admin user for schema management
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'crm_admin') THEN
+        CREATE USER crm_admin WITH PASSWORD 'CHANGE_IN_VAULT_IMMEDIATELY';
+        RAISE NOTICE 'Created user: crm_admin';
+    END IF;
+
+    -- Create application user for queries
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'crm_dbuser') THEN
+        CREATE USER crm_dbuser WITH PASSWORD 'CHANGE_IN_VAULT_IMMEDIATELY';
+        RAISE NOTICE 'Created user: crm_dbuser';
+    END IF;
+END
+$$;
+
+-- Grant database-level privileges
+GRANT ALL PRIVILEGES ON DATABASE crm TO crm_admin;
+GRANT CONNECT ON DATABASE crm TO crm_dbuser;
+
+-- Grant crm_admin ability to manage roles (needed for RLS)
+ALTER USER crm_admin WITH CREATEROLE;
 
 -- -----------------------------------------------------------------------------
 -- Extensions
@@ -1025,9 +1061,50 @@ CREATE TRIGGER trg_sanitize_messages_body
 
 
 -- =============================================================================
--- Verification
+-- Permissions for crm_dbuser
+-- =============================================================================
+-- Grant application user access to all tables, sequences, and functions.
+-- These grants allow RLS-enforced queries but not schema changes.
 -- =============================================================================
 
-SELECT table_name FROM information_schema.tables
-WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-ORDER BY table_name;
+-- Grant schema usage
+GRANT USAGE ON SCHEMA public TO crm_dbuser;
+
+-- Grant table permissions (RLS policies will filter data)
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO crm_dbuser;
+
+-- Grant sequence usage (for any serial columns, though we use UUIDs)
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO crm_dbuser;
+
+-- Grant function execution (gen_random_uuid, triggers, etc.)
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO crm_dbuser;
+
+-- Make grants apply to future objects
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crm_dbuser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO crm_dbuser;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS TO crm_dbuser;
+
+-- =============================================================================
+-- Deployment Verification
+-- =============================================================================
+-- Simple query to verify schema deployment.
+-- Expected: 20 tables created.
+-- =============================================================================
+
+\echo ''
+\echo '==================================================================='
+\echo 'Schema deployment complete!'
+\echo '==================================================================='
+\echo ''
+
+SELECT COUNT(*) as table_count
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+
+\echo ''
+\echo 'Users created: crm_admin, crm_dbuser'
+\echo 'IMPORTANT: Update passwords in Vault immediately!'
+\echo ''
