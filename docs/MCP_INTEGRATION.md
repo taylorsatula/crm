@@ -247,7 +247,9 @@ Capture a new lead: raw notes → LLM extraction → create lead → schedule fo
 
 #### `send_invoice`
 
-Create and send invoice from ticket or standalone.
+Create and send invoice from ticket with Stripe Checkout payment link.
+
+**Permission**: `soft_limit` - requires reasoning for financial operations
 
 ```json
 {
@@ -258,23 +260,28 @@ Create and send invoice from ticket or standalone.
         "type": "string",
         "description": "Create invoice from this ticket's line items"
       },
-      "customer_id": {
-        "type": "string",
-        "description": "For standalone invoice"
-      },
-      "line_items": {
-        "type": "array",
-        "description": "For standalone: [{description, quantity, unit_price}]"
+      "include_payment_link": {
+        "type": "boolean",
+        "default": true,
+        "description": "Generate Stripe Checkout link for payment"
       },
       "notes": {"type": "string"},
       "due_days": {
         "type": "integer",
         "default": 30
       }
-    }
+    },
+    "required": ["ticket_id"]
   }
 }
 ```
+
+**Response includes**:
+- `invoice_id` - created invoice ID
+- `payment_link` - Stripe Checkout URL (if `include_payment_link: true`)
+- `total_amount` - invoice total
+
+**Note**: Customer is redirected to Stripe-hosted payment page. CRM never handles card data.
 
 ---
 

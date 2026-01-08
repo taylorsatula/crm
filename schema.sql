@@ -136,6 +136,9 @@ CREATE TABLE customers (
     preferred_contact_method TEXT,  -- 'email', 'phone', 'text'
     preferred_time_of_day TEXT,     -- 'morning', 'afternoon', 'evening', 'any'
 
+    -- Stripe integration (reference ID only - no sensitive data)
+    stripe_customer_id TEXT,        -- Stripe customer ID (cus_xxx)
+
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -417,6 +420,10 @@ CREATE TABLE invoices (
     sent_at TIMESTAMPTZ,
     paid_at TIMESTAMPTZ,
     voided_at TIMESTAMPTZ,
+
+    -- Stripe integration (reference IDs only - no sensitive data)
+    stripe_checkout_session_id TEXT,   -- Checkout session (cs_xxx)
+    stripe_payment_intent_id TEXT,     -- Payment intent (pi_xxx)
 
     notes TEXT,
 

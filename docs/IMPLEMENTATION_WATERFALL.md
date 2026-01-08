@@ -424,6 +424,86 @@
 
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
+║                         STRIPE INTEGRATION WATERFALL                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PARALLEL TRACK (Can develop alongside Phase 3-4)                            │
+│  Zero PCI scope - CRM stores only Stripe reference IDs                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────┐
+    │  clients/        │
+    │  stripe_client.py│
+    │                  │
+    │  Stripe API      │
+    │  wrapper         │
+    │  - create_       │
+    │    customer      │
+    │  - create_       │
+    │    checkout_     │
+    │    session       │
+    │  - verify_       │
+    │    webhook       │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - vault_client  │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  api/webhooks/   │
+    │  stripe.py       │
+    │                  │
+    │  Webhook handler │
+    │  - Signature     │
+    │    verification  │
+    │  - Event routing │
+    │  - User context  │
+    │    from invoice  │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - stripe_client │
+    │  - invoice_      │
+    │    service       │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  Schema additions (to existing tables):                  │
+    │                                                          │
+    │  contacts:                                               │
+    │    + stripe_customer_id TEXT    (cus_xxx)                │
+    │                                                          │
+    │  invoices:                                               │
+    │    + stripe_checkout_session_id TEXT  (cs_xxx)           │
+    │    + stripe_payment_intent_id TEXT    (pi_xxx)           │
+    │                                                          │
+    │  No new tables - just reference ID columns               │
+    └────────────────────────────────────────────────────────────┘
+             │
+             ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  Integrates into:                                        │
+    │                                                          │
+    │  1. invoice_service.send()                               │
+    │     └── Create/retrieve Stripe Customer                  │
+    │     └── Create Checkout Session                          │
+    │     └── Store session_id on invoice                      │
+    │     └── Include payment_link in email                    │
+    │                                                          │
+    │  2. Webhook handler: checkout.session.completed          │
+    │     └── Verify signature                                 │
+    │     └── Extract invoice_id from metadata                 │
+    │     └── Set user context                                 │
+    │     └── invoice_service.record_payment()                 │
+    │                                                          │
+    │  3. MCP send_invoice workflow (soft_limit)               │
+    │     └── Returns payment_link in response                 │
+    └──────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
 ║                              FRONTEND WATERFALL                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 

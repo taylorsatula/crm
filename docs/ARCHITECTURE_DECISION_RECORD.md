@@ -863,6 +863,126 @@ The CRM exposes an MCP (Model Context Protocol) server enabling an external LLM 
 
 ---
 
+## Part 12: Stripe Integration
+
+### Overview
+
+Stripe Checkout handles payment processing. The CRM has zero PCI DSS scope - all card entry happens on Stripe's hosted page. CRM stores only Stripe reference IDs, never payment data.
+
+### Design Decision: Stripe Checkout for Zero PCI Scope
+
+**Decision**: Use Stripe Checkout Sessions for all payment collection. Customer is redirected to Stripe-hosted payment page.
+
+**Rationale**:
+- Customer never enters card data on CRM domain
+- All sensitive payment handling delegated to Stripe
+- No PCI DSS compliance burden on CRM
+- Stripe handles 3D Secure, fraud detection, card validation
+- CRM stores only reference IDs (`cus_xxx`, `cs_xxx`, `pi_xxx`)
+
+**What CRM Stores**:
+- `stripe_customer_id` on Contact - links CRM customer to Stripe customer
+- `stripe_checkout_session_id` on Invoice - the checkout session created for payment
+- `stripe_payment_intent_id` on Invoice - the payment intent (useful for refunds later)
+
+**What CRM Does NOT Store**:
+- Card numbers, CVV, expiration dates
+- Bank account details
+- Any PCI-sensitive data
+
+### Design Decision: Webhook-Driven Payment Status
+
+**Decision**: Payment status updates come from Stripe webhooks, not API polling.
+
+**Rationale**:
+- Real-time updates without polling overhead
+- Stripe guarantees webhook delivery with retries
+- Single source of truth for payment state
+- Handles edge cases (customer closes browser after payment, network issues)
+
+**Webhook Flow**:
+1. Customer completes payment on Stripe Checkout
+2. Stripe sends `checkout.session.completed` event to `/api/webhooks/stripe`
+3. CRM verifies webhook signature (prevents spoofing)
+4. CRM extracts `invoice_id` from session metadata
+5. CRM calls `invoice_service.record_payment()` to update status
+6. Audit trail records payment event
+
+### Design Decision: Stripe Customer Linking
+
+**Decision**: Create Stripe Customer on first invoice send, link via `stripe_customer_id`.
+
+**Rationale**:
+- Lazy creation - no Stripe Customer until needed
+- Enables Stripe Customer Portal for payment history
+- Future: saved payment methods, subscriptions
+- One Stripe Customer per CRM Contact
+
+**Flow**:
+```
+Invoice send requested
+├── Check contact.stripe_customer_id
+├── If null: Create Stripe Customer from contact data
+│   └── Store stripe_customer_id on contact
+├── Create Checkout Session with customer reference
+├── Store checkout_session_id on invoice
+└── Send email with payment link
+```
+
+### Design Decision: MCP Payment Access (soft_limit)
+
+**Decision**: MCP can trigger invoice sending with payment links, but requires `reasoning` field.
+
+**Rationale**:
+- Model should be able to handle invoicing workflow
+- Financial operations warrant explicit reasoning
+- Audit trail captures why model sent invoice
+- Human can review if patterns look problematic
+
+### Payment Flow Diagram
+
+```
+1. Invoice Created (from ticket close-out or MCP)
+         │
+         ▼
+2. Invoice Sent
+   ├── Create/retrieve Stripe Customer (from contact)
+   ├── Create Stripe Checkout Session
+   │   └── success_url, cancel_url, line_items, customer, metadata
+   ├── Store checkout_session_id on invoice
+   └── Send email with payment_link
+         │
+         ▼
+3. Customer Clicks Link
+   └── Redirected to Stripe-hosted checkout page
+         │
+         ▼
+4. Customer Pays (on Stripe's domain)
+   └── Stripe processes card (CRM never sees card data)
+         │
+         ▼
+5. Stripe Webhook → CRM
+   ├── POST /api/webhooks/stripe
+   ├── Verify signature (STRIPE_WEBHOOK_SECRET)
+   ├── Extract invoice_id from metadata
+   ├── Set user context (from invoice lookup)
+   └── invoice_service.record_payment()
+         │
+         ▼
+6. Invoice Status Updated
+   └── sent → paid (or partial if partial payment)
+```
+
+### Secrets Management
+
+| Secret | Storage | Purpose |
+|--------|---------|---------|
+| `STRIPE_SECRET_KEY` | Vault | API authentication |
+| `STRIPE_WEBHOOK_SECRET` | Vault | Webhook signature verification |
+| `STRIPE_PUBLISHABLE_KEY` | Config (not secret) | Client-side identification |
+
+---
+
 ## Appendix A: Terminology
 
 | Term | Definition |
@@ -883,6 +1003,9 @@ The CRM exposes an MCP (Model Context Protocol) server enabling an external LLM 
 | MCP | Model Context Protocol—Anthropic's protocol for AI tool integration |
 | Model Authorization | Human review/approval of restricted model actions |
 | Capabilities Endpoint | API endpoint that advertises available operations to MCP |
+| Stripe Checkout Session | Stripe-hosted payment page instance for collecting payment |
+| Payment Intent | Stripe's record of a payment attempt |
+| Webhook | HTTP callback from Stripe to notify of payment events |
 
 ---
 
@@ -914,6 +1037,10 @@ The CRM exposes an MCP (Model Context Protocol) server enabling an external LLM 
 | 2025-01-07 | Two-layer MCP tools (raw + workflows) | Raw for flexibility, workflows for common patterns and reduced token usage |
 | 2025-01-07 | Model Authorization Queue | Human oversight for destructive ops without blocking model entirely |
 | 2025-01-07 | Allow Once / Allow Always / Deny | Flexible authorization that can evolve with trust |
+| 2025-01-07 | Stripe Checkout for payments | Zero PCI scope - customer pays on Stripe's domain, not ours |
+| 2025-01-07 | Webhook-driven payment status | Stripe pushes events; no polling required |
+| 2025-01-07 | Stripe Customer lazy creation | Create on first invoice send, link via stripe_customer_id |
+| 2025-01-07 | Store reference IDs only | stripe_customer_id, stripe_checkout_session_id, stripe_payment_intent_id |
 
 ---
 
