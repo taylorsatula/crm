@@ -1,9 +1,26 @@
 # Phase 0: Foundation
 
+**Status**: Complete (2025-01-07)
+
 **Goal**: Establish the zero-dependency utilities that everything else builds upon.
 
-**Estimated files**: 6
+**Files**: 6
 **Dependencies**: None (stdlib + pydantic only)
+
+## Implementation Notes
+
+Deviations from original spec:
+
+| Item | Spec | Implemented | Rationale |
+|------|------|-------------|-----------|
+| `parse_iso()` on naive | Assume UTC | Raise ValueError | No assumptions - explicit is better |
+| `MagicLinkToken.used` | Default False | Required field | Fail closed - state must be explicit |
+| `load_auth_config()` | Load from env vars | Not implemented | Vault only - no env var secrets |
+| Session expiry | 7 days | 90 days | Business requirement |
+| Magic link expiry | 15 minutes | 10 minutes | Business requirement |
+| `success_response()` | Accept request_id param | No param | Server always generates |
+
+Test count: 51 passing
 
 ---
 

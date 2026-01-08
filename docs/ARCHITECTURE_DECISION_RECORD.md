@@ -1,9 +1,3 @@
-!!!!!!!
-Add this as a built-out line item in the requirements and then delete this comment when it is added. if this comment is here You and Taylor have not finished the task, Claude:
-
-Add universal search like MacOS finder. All functionality indexed as an data attribute on top level functionality.
-!!!!!!!
-
 # Architecture Decision Record
 
 ## CRM/Appointment System for Service Businesses
@@ -1033,6 +1027,76 @@ Defense-in-depth sanitization strips sensitive data (credit card numbers, SSNs) 
 
 ---
 
+## Part 14: Universal Search
+
+### Overview
+
+A command palette interface (Cmd+K / Ctrl+K) providing instant access to entities and actions. Inspired by MacOS Spotlight - fast, precise, keyboard-first.
+
+### Design Decision: Command Palette Pattern
+
+**Decision**: Single unified search interface accessible via keyboard shortcut that searches entities AND surfaces executable actions.
+
+**Rationale**:
+- Reduces cognitive load - one place to find anything
+- Keyboard-first UX for power users
+- Consistent with modern application patterns (VS Code, Linear, Notion)
+- Faster than navigating through menus
+
+### Design Decision: Basic Field Search (Not NLP)
+
+**Decision**: Search across structured fields only (name, phone, email, address, dates, amounts). No natural language or attribute-based semantic search.
+
+**Rationale**:
+- Universal search is for precise retrieval, not exploration
+- Natural language queries belong in a separate chat interface (future scope)
+- Keeps implementation simple and results predictable
+- Avoids conflating two different UX patterns
+
+### Search Scope
+
+**Entities** (searchable fields):
+| Entity | Searchable Fields |
+|--------|-------------------|
+| Contact | name, phone, email |
+| Ticket | customer name, address, scheduled date |
+| Invoice | customer name, invoice number, amount |
+| Lead | name, phone, email, source |
+| Service | name, description |
+| Scheduled Message | customer name, message type |
+
+**Actions** (from capabilities endpoint):
+- Create: new ticket, new contact, new lead, new invoice
+- Navigate: calendar views, settings, reports
+- Quick actions: clock in/out, send invoice, schedule message
+
+### Implementation Approach
+
+**Backend**: `GET /api/search?q=...&types=...&limit=...`
+- Queries multiple entity tables in parallel
+- Returns categorized results (entities grouped by type, actions separate)
+- Leverages PostgreSQL full-text search on indexed fields
+
+**Frontend**: Command palette modal
+- Triggered by Cmd+K (Mac) / Ctrl+K (Windows/Linux)
+- Typeahead with debounced search
+- Keyboard navigation (arrow keys, Enter to select)
+- Results grouped by category
+- Recent searches remembered
+
+### What This Is NOT
+
+- Not a chat interface
+- Not semantic/NLP search
+- Not a replacement for the rich search in contact list views
+- Not for complex queries ("elderly customers in Madison who had service last spring")
+
+Those use cases are addressed by:
+- Future: Chat interface with MCP-connected LLM
+- Current: Contact list filters with attribute support
+
+---
+
 ## Appendix A: Terminology
 
 | Term | Definition |
@@ -1056,6 +1120,8 @@ Defense-in-depth sanitization strips sensitive data (credit card numbers, SSNs) 
 | Stripe Checkout Session | Stripe-hosted payment page instance for collecting payment |
 | Payment Intent | Stripe's record of a payment attempt |
 | Webhook | HTTP callback from Stripe to notify of payment events |
+| Universal Search | Command palette interface (Cmd+K) for fast entity lookup and action execution |
+| Command Palette | Keyboard-triggered modal for quick access to search and actions |
 
 ---
 
@@ -1094,6 +1160,14 @@ Defense-in-depth sanitization strips sensitive data (credit card numbers, SSNs) 
 | 2025-01-07 | Ticket-level estimated pricing flag | Simple boolean, shows "Estimated" in UI/emails, requires confirmation at close-out |
 | 2025-01-07 | Three-layer input sanitization | Frontend + backend + DB triggers for notes/messages only |
 | 2025-01-07 | Visible redaction with warning | Replace with [REDACTED], show user warning, log to security_events |
+| 2025-01-07 | Command palette universal search | Keyboard-first (Cmd+K), entities + actions, basic field search only |
+| 2025-01-07 | Basic field search (not NLP) for universal search | Fast/precise retrieval pattern; NLP belongs in separate chat interface |
+| 2025-01-07 | parse_iso() rejects naive strings | No assumptions about timezone - explicit is better than implicit |
+| 2025-01-07 | MagicLinkToken.used is required (no default) | Fail closed - token state must be explicitly declared |
+| 2025-01-07 | No env var config overrides | Vault or defaults only - secrets don't belong in environment |
+| 2025-01-07 | Session expiry 90 days, magic link 10 minutes | Business requirements override spec defaults |
+| 2025-01-07 | Request IDs always server-generated | Never accept client-provided request IDs |
+| 2025-01-07 | Test structure mirrors source structure | tests/auth/ for auth/, tests/api/ for api/, etc. |
 
 ---
 

@@ -534,6 +534,64 @@
     └──────────────────┘
 
 
+═══ UNIVERSAL SEARCH (Parallel with Phase 4) ═══
+
+    ┌──────────────────┐
+    │  core/           │
+    │  search_service  │
+    │  .py             │
+    │                  │
+    │  Unified search  │
+    │  across entities │
+    │  - Basic field   │
+    │    matching      │
+    │  - PostgreSQL    │
+    │    full-text     │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - postgres_     │
+    │    client        │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  api/            │
+    │  search.py       │
+    │                  │
+    │  GET /api/search │
+    │  ?q=query        │
+    │  &types=...      │
+    │  &limit=...      │
+    │                  │
+    │  Returns:        │
+    │  - entities      │
+    │    (by type)     │
+    │  - actions       │
+    │    (from caps)   │
+    │                  │
+    │  DEPENDS ON:     │
+    │  - search_service│
+    │  - capabilities  │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  static/js/      │
+    │  command-        │
+    │  palette.js      │
+    │                  │
+    │  Cmd+K / Ctrl+K  │
+    │  Modal UI        │
+    │  Keyboard nav    │
+    │  Result groups   │
+    │  Action execute  │
+    │  Recent searches │
+    │                  │
+    │  NO DEPS         │
+    │  (standalone JS) │
+    └──────────────────┘
+
+
 ═══ FRONTEND (Parallel with backend phases) ═══
 
     static/css/base.css ─► static/js/api.js (fetch wrapper)
