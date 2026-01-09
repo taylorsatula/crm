@@ -10,3 +10,4 @@ from clients.vault_client import (
 )
 from clients.postgres_client import PostgresClient
 from clients.valkey_client import ValkeyClient
+from clients.email_client import EmailGatewayClient, EmailGatewayError

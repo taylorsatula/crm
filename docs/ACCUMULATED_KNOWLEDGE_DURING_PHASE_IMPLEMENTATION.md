@@ -295,13 +295,64 @@ secret/crm/stripe → secret_key, webhook_secret
 
 ---
 
-## Phase 2: Auth System (Next)
+## Phase 2: Auth System (In Progress)
 
-### What's Coming
-- Magic link authentication
-- Session management
-- Rate limiting
-- Auth middleware
+### What Was Built
+
+| File | Purpose |
+|------|---------|
+| `clients/email_client.py` | HTTP gateway client with HMAC signing |
+| `auth/database.py` | User and magic link token operations |
+
+### Database Operations
+
+**Direct psql commands**: For schema migrations during development, use the taylut user:
+```bash
+psql -U taylut -d crm -c "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;"
+```
+
+**Schema changes made**:
+- Added `is_active` column to `users` table (for freezing logins)
+
+### UUID Handling in Tests
+
+PostgresClient returns native UUID objects. When extracting IDs from query results:
+```python
+# Handle both string and UUID return types
+user_id = result[0]["id"]
+if isinstance(user_id, str):
+    user_id = UUID(user_id)
+```
+
+### Test Cleanup Pattern
+
+Use fixtures to track and clean up test data:
+```python
+@pytest.fixture
+def cleanup_user(db_admin):
+    """Track users created during tests for cleanup."""
+    created_emails = []
+
+    def _track(email):
+        created_emails.append(email.lower())
+
+    yield _track
+
+    # Cleanup
+    for email in created_emails:
+        db_admin.execute("DELETE FROM users WHERE email = %s", (email,))
+```
+
+### Email Gateway Pattern
+
+Using HTTP gateway (same as botwithmemory) instead of direct SMTP:
+- Payload: `{"email": ..., "token": ..., "app_url": ...}`
+- Headers: `X-API-Key`, `X-Signature` (HMAC-SHA256)
+- Vault secrets: `secret/crm/email` → `gateway_url`, `api_key`, `hmac_secret`
+
+### Auth Tables Have NO RLS
+
+Auth tables (`users`, `magic_link_tokens`, `security_events`) are accessed before user context exists. They have no RLS policies - authentication happens before authorization.
 
 ### Dependencies
 - All Phase 1 clients (Vault for secrets, Postgres for users/sessions, Valkey for rate limiting)

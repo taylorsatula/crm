@@ -36,3 +36,7 @@ class SessionExpiredError(AuthError):
 
 class SessionRevokedError(AuthError):
     """Session was explicitly revoked (logout or security action)."""
+
+
+class UserInactiveError(AuthError):
+    """User account is deactivated. Login not permitted."""

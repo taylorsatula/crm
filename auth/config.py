@@ -22,18 +22,9 @@ class AuthConfig(BaseModel):
     # Session settings
     session_expiry_hours: int = Field(
         default=2160,  # 90 days
-        description="Session lifetime in hours",
+        description="Session lifetime (hours since last activity, sliding window)",
         ge=1,
         le=2160,
-    )
-    session_extend_on_activity: bool = Field(
-        default=True,
-        description="Whether to extend session expiry on activity",
-    )
-    session_extend_threshold_hours: int = Field(
-        default=24,
-        description="Extend session if less than this many hours remaining",
-        ge=1,
     )
 
     # Rate limiting

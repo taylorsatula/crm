@@ -7,6 +7,7 @@ from auth.exceptions import (
     UserNotFoundError,
     SessionExpiredError,
     SessionRevokedError,
+    UserInactiveError,
 )
 from auth.types import (
     User,
@@ -16,3 +17,10 @@ from auth.types import (
     AuthenticatedUser,
 )
 from auth.config import AuthConfig
+from auth.database import AuthDatabase
+from auth.rate_limiter import RateLimiter
+from auth.security_logger import SecurityLogger, SecurityEvent
+from auth.session import SessionManager
+from auth.service import AuthService, MagicLinkResult
+from auth.security_middleware import AuthMiddleware
+from auth.api import create_auth_router

@@ -11,6 +11,7 @@ class User(BaseModel):
 
     id: UUID
     email: EmailStr
+    is_active: bool = True
     created_at: datetime
     last_login_at: datetime | None = None
 

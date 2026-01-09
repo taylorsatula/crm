@@ -154,10 +154,14 @@ def get_valkey_url() -> str:
 
 
 def get_email_config() -> Dict[str, str]:
-    """Get email service configuration from Vault."""
+    """Get email gateway configuration from Vault.
+
+    Returns:
+        Dict with keys: gateway_url, api_key, hmac_secret
+    """
     client = _ensure_vault_client()
 
-    fields = ["api_key", "from_address", "provider"]
+    fields = ["gateway_url", "api_key", "hmac_secret"]
     result = {}
 
     for field in fields:

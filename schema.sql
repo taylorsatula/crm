@@ -80,6 +80,7 @@ CREATE TABLE users (
     email TEXT UNIQUE NOT NULL,
     display_name TEXT,
     timezone TEXT DEFAULT 'America/Chicago',
+    is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,

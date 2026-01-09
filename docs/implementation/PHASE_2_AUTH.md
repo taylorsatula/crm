@@ -433,34 +433,6 @@ class SecurityLogger:
             """,
             tuple(params)
         )
-
-    def get_failed_attempts(
-        self,
-        email: str,
-        since_minutes: int = 60
-    ) -> int:
-        """Count failed magic link attempts in time window."""
-        from datetime import timedelta
-
-        since = now_utc() - timedelta(minutes=since_minutes)
-
-        result = self.postgres.execute_admin(
-            """
-            SELECT COUNT(*) as count
-            FROM security_events
-            WHERE email = %s
-              AND event_type IN (%s, %s, %s)
-              AND created_at > %s
-            """,
-            (
-                email,
-                SecurityEvent.MAGIC_LINK_FAILED.value,
-                SecurityEvent.MAGIC_LINK_EXPIRED.value,
-                SecurityEvent.MAGIC_LINK_ALREADY_USED.value,
-                since
-            )
-        )
-        return result[0]["count"]
 ```
 
 ---
@@ -562,11 +534,8 @@ class SessionManager:
             self.valkey.delete(self._key(token))
             raise SessionExpiredError("Session expired")
 
-        # Extend session if configured and within threshold
-        if self.config.session_extend_on_activity:
-            hours_remaining = (session.expires_at - now).total_seconds() / 3600
-            if hours_remaining < self.config.session_extend_threshold_hours:
-                session = self._extend_session(session)
+        # Always extend session on activity (sliding window)
+        session = self._extend_session(session)
 
         return session
 
@@ -599,27 +568,6 @@ class SessionManager:
     def revoke_session(self, token: str) -> None:
         """Revoke session (logout)."""
         self.valkey.delete(self._key(token))
-
-    def revoke_all_sessions(self, user_id: UUID) -> int:
-        """
-        Revoke all sessions for user.
-
-        Note: This requires scanning keys, which is expensive.
-        Consider maintaining a user->sessions index for production.
-
-        Returns count of revoked sessions.
-        """
-        # For now, this is a stub - full implementation needs key scanning
-        # or a secondary index of user_id -> [session_tokens]
-        #
-        # Production approach:
-        # 1. Maintain set at "user_sessions:{user_id}" with all tokens
-        # 2. On revoke_all, iterate set and delete each session
-        # 3. Delete the set
-        raise NotImplementedError(
-            "revoke_all_sessions requires additional indexing. "
-            "Implement user->sessions mapping for production use."
-        )
 ```
 
 ### Tests Required
@@ -827,7 +775,9 @@ class AuthService:
 
         Raises RateLimitedError if too many attempts.
 
-        Note: Does NOT reveal whether email exists (always succeeds publicly).
+        Note: Returns needs_signup=True for unknown emails to enable
+        frontend signup flow. Enumeration protection is handled via
+        IP-based rate limiting on failed lookups, not by hiding results.
         """
         email = email.lower().strip()
 
