@@ -106,12 +106,13 @@ def reset_db_state(db_admin):
         return
 
     # Truncate user-scoped tables (CASCADE handles foreign keys)
+    # Also truncate audit_log for test isolation (despite being append-only in prod)
     db_admin.execute("""
         TRUNCATE
             customers, addresses, services, tickets, ticket_technicians,
             line_items, invoices, notes, attributes, scheduled_messages,
             waitlist, leads, recurring_templates, recurring_template_services,
-            model_authorization_queue
+            model_authorization_queue, audit_log
         CASCADE
     """)
 

@@ -205,8 +205,10 @@ CREATE INDEX idx_customers_phone_trgm ON customers USING GIN (phone gin_trgm_ops
 -- RLS
 ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY customers_isolation ON customers FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY customers_insert ON customers FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -268,9 +270,10 @@ CREATE TABLE services (
     description TEXT,
 
     -- Pricing: 'fixed', 'flexible', 'per_unit'
+    -- All prices in cents (integer) to avoid floating point issues
     pricing_type TEXT NOT NULL,
-    default_price DECIMAL(10,2),      -- For fixed/flexible
-    unit_price DECIMAL(10,2),         -- For per_unit
+    default_price_cents INT,          -- For fixed/flexible ($10.00 = 1000)
+    unit_price_cents INT,             -- For per_unit
     unit_label TEXT,                  -- "screen", "window", "hour"
 
     is_active BOOLEAN NOT NULL DEFAULT true,
@@ -281,8 +284,8 @@ CREATE TABLE services (
     deleted_at TIMESTAMPTZ,
 
     CONSTRAINT services_valid_pricing CHECK (pricing_type IN ('fixed', 'flexible', 'per_unit')),
-    CONSTRAINT services_fixed_needs_price CHECK (pricing_type != 'fixed' OR default_price IS NOT NULL),
-    CONSTRAINT services_per_unit_needs_price CHECK (pricing_type != 'per_unit' OR unit_price IS NOT NULL)
+    CONSTRAINT services_fixed_needs_price CHECK (pricing_type != 'fixed' OR default_price_cents IS NOT NULL),
+    CONSTRAINT services_per_unit_needs_price CHECK (pricing_type != 'per_unit' OR unit_price_cents IS NOT NULL)
 );
 
 CREATE TRIGGER services_updated_at BEFORE UPDATE ON services
@@ -291,14 +294,8 @@ CREATE TRIGGER services_updated_at BEFORE UPDATE ON services
 CREATE INDEX idx_services_user ON services(user_id);
 CREATE INDEX idx_services_active ON services(user_id) WHERE is_active = true AND deleted_at IS NULL;
 
--- RLS
-ALTER TABLE services ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY services_isolation ON services FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
-
-CREATE POLICY services_insert ON services FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+-- NO RLS: Services are a shared catalog, not user-scoped data.
+-- Soft-delete filtering handled in application layer queries.
 
 
 -- -----------------------------------------------------------------------------
@@ -362,8 +359,10 @@ CREATE INDEX idx_tickets_date ON tickets(user_id, (scheduled_at::date));
 -- RLS
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY tickets_isolation ON tickets FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY tickets_insert ON tickets FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -403,8 +402,8 @@ CREATE TABLE line_items (
 
     description TEXT,             -- Override service name if needed
     quantity INT NOT NULL DEFAULT 1,
-    unit_price DECIMAL(10,2),
-    total_price DECIMAL(10,2) NOT NULL,
+    unit_price_cents INT,         -- Price per unit in cents
+    total_price_cents INT NOT NULL, -- Total in cents ($10.00 = 1000)
     duration_minutes INT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -421,8 +420,10 @@ CREATE INDEX idx_line_items_service ON line_items(service_id);
 -- RLS
 ALTER TABLE line_items ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY line_items_isolation ON line_items FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY line_items_insert ON line_items FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -447,12 +448,12 @@ CREATE TABLE invoices (
     -- Status
     status TEXT NOT NULL DEFAULT 'draft',  -- draft, sent, partial, paid, void
 
-    -- Amounts (computed from ticket's line_items)
-    subtotal DECIMAL(10,2) NOT NULL,
-    tax_rate DECIMAL(5,4) DEFAULT 0,
-    tax_amount DECIMAL(10,2) DEFAULT 0,
-    total_amount DECIMAL(10,2) NOT NULL,
-    amount_paid DECIMAL(10,2) DEFAULT 0,
+    -- Amounts in cents (computed from ticket's line_items)
+    subtotal_cents INT NOT NULL,      -- $10.00 = 1000
+    tax_rate_bps INT DEFAULT 0,       -- Basis points: 1000 = 10%
+    tax_amount_cents INT DEFAULT 0,
+    total_amount_cents INT NOT NULL,
+    amount_paid_cents INT DEFAULT 0,
 
     -- Dates
     issued_at TIMESTAMPTZ,
@@ -486,8 +487,10 @@ CREATE INDEX idx_invoices_status ON invoices(user_id, status);
 -- RLS
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY invoices_isolation ON invoices FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY invoices_insert ON invoices FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -529,8 +532,10 @@ CREATE INDEX idx_notes_ticket ON notes(ticket_id) WHERE ticket_id IS NOT NULL;
 -- RLS
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY notes_isolation ON notes FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY notes_insert ON notes FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
@@ -552,7 +557,7 @@ CREATE TABLE attributes (
 
     source_type TEXT NOT NULL DEFAULT 'manual',  -- 'manual', 'llm_extracted'
     source_note_id UUID REFERENCES notes(id) ON DELETE SET NULL,
-    confidence DECIMAL(3,2),  -- For LLM-extracted
+    confidence DECIMAL(3,2),  -- 0.00-1.00, for LLM-extracted only
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -603,7 +608,7 @@ CREATE TABLE scheduled_messages (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT scheduled_messages_valid_status CHECK (status IN ('pending', 'sent', 'cancelled', 'failed')),
+    CONSTRAINT scheduled_messages_valid_status CHECK (status IN ('pending', 'sent', 'cancelled', 'failed', 'skipped')),
     CONSTRAINT scheduled_messages_valid_type CHECK (message_type IN ('service_reminder', 'appointment_confirmation', 'appointment_reminder', 'custom'))
 );
 
@@ -777,8 +782,10 @@ CREATE INDEX idx_leads_email_trgm ON leads USING GIN (email gin_trgm_ops);
 -- RLS
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 
+-- RLS: User isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY leads_isolation ON leads FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid AND deleted_at IS NULL);
+    USING (user_id = current_setting('app.current_user_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
 
 CREATE POLICY leads_insert ON leads FOR INSERT
     WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);

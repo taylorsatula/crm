@@ -295,7 +295,177 @@ secret/crm/stripe → secret_key, webhook_secret
 
 ---
 
-## Phase 2: Auth System (In Progress)
+## Phase 2: Auth System (Complete)
+
+See commit 1fb8406 for full details.
+
+---
+
+## Phase 3: Core Domain (Complete)
+
+### What Was Built
+
+| File | Purpose | Tests |
+|------|---------|-------|
+| `core/audit.py` | AuditLogger, compute_changes() | 15 |
+| `clients/llm_client.py` | OpenAI-compatible LLM client | 6 (real API) |
+| `core/models/*.py` | 10 Pydantic domain models | 12 |
+| `core/services/customer_service.py` | Customer CRUD | 18 |
+| `core/services/address_service.py` | Address CRUD (hard delete) | 11 |
+| `core/services/catalog_service.py` | Service catalog (no RLS) | 14 |
+| `core/services/ticket_service.py` | Ticket lifecycle | 13 |
+
+### Schema Changes
+
+**Prices as integer cents** - All monetary values stored as INT representing cents:
+- `default_price_cents`, `unit_price_cents` (services)
+- `unit_price_cents`, `total_price_cents` (line_items)
+- `subtotal_cents`, `tax_amount_cents`, `total_amount_cents`, `amount_paid_cents` (invoices)
+- `tax_rate_bps` - basis points where 1000 = 10%
+
+**Services table has NO RLS** - Service catalog is shared, not user-scoped. Soft-delete filtering done in application layer queries (`WHERE deleted_at IS NULL`).
+
+**Confidence is Decimal** - `attributes.confidence` is `DECIMAL(3,2)` (0.00-1.00), only populated for `llm_extracted` source type.
+
+### Service Pattern
+
+```python
+class XxxService:
+    def __init__(self, postgres: PostgresClient, audit: AuditLogger):
+        self.postgres = postgres
+        self.audit = audit
+
+    def create(self, data: XxxCreate) -> Xxx:
+        # 1. Get user_id from context
+        # 2. Generate UUID and timestamp
+        # 3. INSERT with execute_returning()
+        # 4. Validate with Pydantic model
+        # 5. Log audit entry
+        # 6. Return model
+
+    def get_by_id(self, id: UUID) -> Xxx | None:
+        # execute_single() returns dict or None
+        # Return Model.model_validate(row) or None
+
+    def update(self, id: UUID, data: XxxUpdate) -> Xxx:
+        # 1. Get current state
+        # 2. Check immutability constraints
+        # 3. Build SET clause from non-None fields
+        # 4. Warn on unknown fields
+        # 5. UPDATE with execute_returning()
+        # 6. Log changes with compute_changes()
+        # 7. Return updated model
+
+    def delete(self, id: UUID) -> bool:
+        # Soft delete: SET deleted_at = now_utc()
+        # Log with {"deleted": entity.model_dump(mode="json")}
+```
+
+### Audit Logging
+
+**UUID serialization**: Always use `model_dump(mode="json")` when passing to audit logger - converts UUIDs to strings for JSON storage.
+
+```python
+# CREATE
+self.audit.log_change(
+    entity_type="customer",
+    entity_id=customer.id,
+    action=AuditAction.CREATE,
+    changes={"created": data.model_dump(mode="json", exclude_none=True)}
+)
+
+# UPDATE
+changes = compute_changes(
+    current.model_dump(mode="json"),
+    updated.model_dump(mode="json")
+)
+if changes:
+    self.audit.log_change(..., action=AuditAction.UPDATE, changes=changes)
+
+# DELETE
+self.audit.log_change(
+    ...,
+    action=AuditAction.DELETE,
+    changes={"deleted": current.model_dump(mode="json")}
+)
+```
+
+### Error Messages
+
+Be specific about WHY something failed:
+- "Ticket already clocked in" (specific - already did it)
+- "Ticket cannot clock in - status is completed" (specific - wrong state)
+- NOT just "invalid operation" (vague)
+
+Check more specific conditions first to give better errors.
+
+### Test Fixtures
+
+```python
+@pytest.fixture
+def test_customer(as_test_user, customer_service):
+    """Create test customer, delete after test."""
+    customer = customer_service.create(CustomerCreate(first_name="Test"))
+    yield customer
+    customer_service.delete(customer.id)
+```
+
+For entities created within tests, clean up explicitly at end of test.
+
+### Soft vs Hard Delete
+
+| Entity | Delete Type | Why |
+|--------|-------------|-----|
+| Customer | Soft | Historical data, audit trail |
+| Address | Hard | Cascades from customer, no independent history |
+| Service | Soft | Referenced by historical line items |
+| Ticket | Soft | Audit trail, invoices |
+| Note | Soft | Audit trail |
+
+### Pagination Pattern (Inline)
+
+Not using a pagination module. Each list method implements directly:
+
+```python
+def list(self, limit: int = 50, offset: int = 0) -> list[Model]:
+    rows = self.postgres.execute(
+        "SELECT * FROM table ORDER BY created_at DESC LIMIT %s OFFSET %s",
+        (limit, offset)
+    )
+    return [Model.model_validate(row) for row in rows]
+```
+
+### Completed Services
+
+| Service | Tests | Key Features |
+|---------|-------|--------------|
+| `line_item_service.py` | 14 | Add/remove from tickets, uses service default prices |
+| `note_service.py` | 13 | Customer/ticket notes, processed_at tracking |
+| `invoice_service.py` | 14 | Create from ticket, send, record_payment, void |
+| `note_service.py` | 13 | Customer/ticket notes, mark_processed for LLM |
+| `attribute_service.py` | 12 | Upsert by key, bulk_create_from_extraction |
+| `message_service.py` | 16 | Schedule, cancel, mark_sent/failed/skipped, process_pending |
+| `core/extraction.py` | 11 | LLM extraction with jsonrepair fallback |
+
+### Key Learnings from Remaining Services
+
+**Invoice Number Generation**: Format `INV-YYYYMMDD-XXXX` with sequence per day.
+
+**MessageStatus has 5 states**: PENDING, SENT, CANCELLED, FAILED, SKIPPED
+- FAILED = gateway error (tried but failed)
+- SKIPPED = precondition failed (no email, etc.)
+
+**Schema Change**: Added `skipped` to scheduled_messages_valid_status constraint.
+
+**Email Validation**: `.local` TLD is reserved - use `@example.com` in tests.
+
+**JSON Repair**: Use `json_repair.repair_json()` to handle common LLM JSON errors (trailing commas, unquoted keys) before giving up.
+
+**Test Count**: 370 tests passing
+
+---
+
+## Phase 2: Auth System (Complete - see above)
 
 ### What Was Built
 
