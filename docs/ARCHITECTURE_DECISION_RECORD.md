@@ -305,10 +305,11 @@ This friction is intentional. It produces better data.
 - Progressive enhancement
 - Works without JavaScript for core flows
 
-**LLM Integration**: OpenAI-compatible API format
-- Provider flexibility (Qwen3 initially)
-- Well-documented format
-- Tool calling support
+**LLM Integration**: Anthropic SDK (native)
+- Direct API access without intermediaries
+- Streaming with typed events
+- Tool use with parallel execution
+- Extended thinking for complex reasoning
 
 **Email**: Transactional email service (specific provider TBD)
 - Appointment confirmations
@@ -327,11 +328,16 @@ crm/
 ├── core/          # Domain models, business logic
 │   ├── models/    # Pydantic models
 │   ├── services/  # Business logic
+│   ├── handlers/  # Event handlers
+│   ├── events.py  # Domain event definitions
+│   ├── event_bus.py # Event bus infrastructure
 │   └── audit.py   # Universal audit trail
 ├── clients/       # External service clients
-│   ├── postgres.py
-│   ├── llm.py
-│   └── email.py
+│   ├── postgres_client.py
+│   ├── llm_client.py
+│   ├── valkey_client.py
+│   ├── vault_client.py
+│   └── email_client.py
 ├── auth/          # Authentication system
 ├── utils/         # Cross-cutting utilities
 │   └── timezone.py
@@ -394,11 +400,11 @@ GET /api/data?type=tickets&id=123&include=line_items,audit_trail
 GET /api/data?type=scheduled_messages&filter=pending&customer_id=456
 ```
 
-Query parameters handle filtering, pagination, and field selection. The `type` parameter routes to the appropriate handler.
+Query parameters handle filtering, limits, and field selection. The `type` parameter routes to the appropriate handler.
 
 **Why This Split**
 
-Separating reads from writes provides clarity about what operations have side effects. The actions endpoint can enforce CSRF protection, audit logging, and other write-specific concerns uniformly. The data endpoint can focus on caching, pagination, and query optimization.
+Separating reads from writes provides clarity about what operations have side effects. The actions endpoint can enforce CSRF protection, audit logging, and other write-specific concerns uniformly. The data endpoint can focus on caching and query optimization.
 
 ### Database Design
 
@@ -452,20 +458,29 @@ We use raw SQL rather than an ORM for several reasons:
 
 ### LLM Integration
 
-**Unified Provider Interface**
+**Anthropic SDK Client**
 
-All LLM calls go through a single client that handles:
-- Request formatting (OpenAI-compatible)
-- Error handling and retries
-- Usage tracking
-- Model selection
+All LLM calls go through `LLMClient` which wraps the native Anthropic SDK:
+- Streaming support with typed events (`TextEvent`, `ToolExecutingEvent`, etc.)
+- Tool use with automatic parallel execution
+- Extended thinking for complex reasoning tasks
+- Error handling with typed exceptions
 
 ```python
+from clients.llm_client import LLMClient, TextEvent, ToolCompletedEvent
+
 llm = LLMClient()
-response = llm.generate(
-    messages=[...],
-    tools=[...]  # Optional tool definitions
-)
+
+# Non-streaming (extraction, distillation)
+response = llm.generate(messages=[...], thinking=True)
+
+# Streaming with tools (customer conversations)
+for event in llm.stream(messages, tools, tool_executor):
+    match event:
+        case TextEvent(content):
+            print(content, end="")
+        case ToolCompletedEvent(name, id, result):
+            print(f"Tool {name} completed")
 ```
 
 **After-Action Processing**
@@ -817,7 +832,7 @@ The CRM exposes an MCP (Model Context Protocol) server enabling an external LLM 
 | Tool | Purpose |
 |------|---------|
 | `crm_capabilities` | Discover available domains, actions, data types |
-| `crm_query` | Query any data type with filters, pagination, expansion |
+| `crm_query` | Query any data type with filters, limits, expansion |
 | `crm_action` | Execute any action on any domain |
 
 **Layer 2: Workflows**
@@ -1097,6 +1112,192 @@ Those use cases are addressed by:
 
 ---
 
+## Part 15: Event-Driven Architecture
+
+### Overview
+
+Domain events enable loose coupling between services. When a ticket is completed, the close-out service doesn't need to know about attribute extraction, scheduled messages, or search indexing. It publishes a `TicketCompletedEvent` and handlers react independently.
+
+This pattern is adapted from MIRA (the reference architecture). The key insight: business operations often trigger multiple downstream effects, and encoding all those effects in the originating service creates tight coupling and maintenance burden.
+
+### Design Decision: Synchronous Event Bus
+
+**Decision**: Events execute synchronously in the publishing thread. No background queues, no async handlers.
+
+**Rationale**:
+- Simplicity: No distributed system complexity (queues, retries, dead letter handling)
+- Consistency: When `ticket_service.close()` returns, all side effects have completed
+- Debugging: Stack traces flow through event handlers naturally
+- Transactions: Handlers can participate in the same database transaction if needed
+- Testing: Straightforward to test without async machinery
+
+**Trade-off**: Long-running handlers block the request. Acceptable for this system because:
+- LLM extraction (the heaviest operation) already happens during close-out wizard, not in the event handler
+- Email sending can be quick (hand off to email service)
+- Search index updates are fast
+
+If a handler becomes slow, the answer is to optimize it or move the heavy work earlier in the flow—not to add async complexity.
+
+### Design Decision: State-Carrying Events
+
+**Decision**: Events carry the complete changed state, not just entity IDs.
+
+**Rationale**:
+- Prevents race conditions where handlers re-fetch stale data
+- Handlers don't need database access for basic operations
+- Event is authoritative—what the event says happened, happened
+- Reduces database queries in handler chains
+
+**Example**:
+```python
+@dataclass(frozen=True)
+class TicketCompletedEvent:
+    ticket_id: UUID
+    user_id: UUID
+    contact_id: UUID
+    notes: str | None           # Handler doesn't need to fetch
+    next_service_action: str    # "schedule", "reach_out", "none"
+    reach_out_months: int | None
+    occurred_at: datetime
+```
+
+### Design Decision: Self-Registering Handlers
+
+**Decision**: Handlers register themselves with the event bus during initialization.
+
+**Rationale**:
+- No central "wire everything up" file that grows unbounded
+- Each handler declares its dependencies explicitly
+- Adding a new handler is a single-file change
+- Handler can be disabled by not instantiating it
+
+**Pattern**:
+```python
+class AttributeExtractionHandler:
+    def __init__(self, event_bus: EventBus, llm_client: LLMClient):
+        self.llm_client = llm_client
+        event_bus.subscribe('TicketCompletedEvent', self.handle_ticket_completed)
+
+    def handle_ticket_completed(self, event: TicketCompletedEvent) -> None:
+        if event.notes:
+            # Extract and persist attributes
+            ...
+```
+
+### Domain Events
+
+**Ticket Lifecycle**:
+| Event | Publisher | Trigger |
+|-------|-----------|---------|
+| `TicketCreatedEvent` | ticket_service.create() | New ticket scheduled |
+| `TicketModifiedEvent` | ticket_service.update() | Any modification before close-out |
+| `TicketCompletedEvent` | ticket_service.close() | Close-out wizard finished |
+
+**Contact Lifecycle**:
+| Event | Publisher | Trigger |
+|-------|-----------|---------|
+| `ContactCreatedEvent` | contact_service.create() | New customer added |
+| `ContactUpdatedEvent` | contact_service.update() | Contact data modified |
+
+**Invoice Lifecycle**:
+| Event | Publisher | Trigger |
+|-------|-----------|---------|
+| `InvoiceCreatedEvent` | invoice_service.create() | Invoice generated |
+| `InvoiceSentEvent` | invoice_service.send() | Invoice emailed to customer |
+| `InvoicePaidEvent` | stripe webhook handler | Payment confirmed |
+
+**Lead Lifecycle**:
+| Event | Publisher | Trigger |
+|-------|-----------|---------|
+| `LeadCreatedEvent` | lead_service.create() | Lead captured from call/inquiry |
+| `LeadConvertedEvent` | lead_service.convert() | Lead converted to customer |
+
+**Messaging**:
+| Event | Publisher | Trigger |
+|-------|-----------|---------|
+| `ScheduledMessageCreatedEvent` | message_service.schedule() | Outreach scheduled |
+| `ScheduledMessageSentEvent` | message_service.send() | Message delivered |
+
+### Event Handlers
+
+**AttributeExtractionHandler**
+- Listens to: `TicketCompletedEvent`
+- Action: If notes present, queue LLM extraction and persist structured attributes to contact
+- Note: The extraction itself happens during close-out wizard with human validation. This handler persists the already-validated attributes.
+
+**ScheduledMessageHandler**
+- Listens to: `TicketCompletedEvent`
+- Action: If `next_service_action == "reach_out"`, create scheduled message for `reach_out_months` in future
+
+**SearchIndexHandler** (future)
+- Listens to: `ContactCreatedEvent`, `ContactUpdatedEvent`, `TicketCompletedEvent`
+- Action: Update search indices with new/changed data
+
+**NotificationHandler** (future)
+- Listens to: Various events
+- Action: Internal notifications (new lead, payment received, etc.)
+
+### Event Bus Implementation
+
+```python
+class EventBus:
+    def __init__(self):
+        self._subscribers: dict[str, list[Callable]] = {}
+
+    def subscribe(self, event_type: str, callback: Callable) -> None:
+        """Register handler for event type."""
+        if event_type not in self._subscribers:
+            self._subscribers[event_type] = []
+        self._subscribers[event_type].append(callback)
+
+    def publish(self, event: DomainEvent) -> None:
+        """Synchronously execute all handlers for this event type."""
+        event_type = event.__class__.__name__
+        for callback in self._subscribers.get(event_type, []):
+            try:
+                callback(event)
+            except Exception as e:
+                logger.error(f"Handler failed for {event_type}: {e}")
+                # Continue to next handler - don't cascade failures
+```
+
+**Error Isolation**: Handler failures are logged but don't stop other handlers or fail the originating operation. This is intentional—a search index failure shouldn't prevent ticket close-out.
+
+### Wiring (Application Startup)
+
+```python
+# In application factory or main.py lifespan
+event_bus = EventBus()
+
+# Create handlers with dependencies, each self-registers
+AttributeExtractionHandler(event_bus, llm_client, contact_service)
+ScheduledMessageHandler(event_bus, message_service)
+
+# Pass event_bus to services that need to publish
+ticket_service = TicketService(db, audit, event_bus)
+invoice_service = InvoiceService(db, audit, event_bus)
+```
+
+### What Events Are NOT For
+
+Events are for **loose coupling between domains**, not for:
+- Audit logging (handled directly in services via audit module)
+- Request/response flows (use direct method calls)
+- Real-time UI updates (separate concern, possibly WebSockets later)
+- Replacing database triggers (triggers are for last-line-of-defense constraints)
+
+### MIRA Reference
+
+This pattern adapts MIRA's event architecture:
+- `cns/core/events.py` - Event definitions
+- `cns/integration/event_bus.py` - EventBus implementation
+- `cns/services/orchestrator.py` - Publishing pattern
+- `working_memory/trinkets/*.py` - Handler registration pattern
+
+Key difference from MIRA: CRM events are simpler (CRUD operations vs. conversation turns) but follow the same synchronous, state-carrying, self-registering pattern.
+
+---
+
 ## Appendix A: Terminology
 
 | Term | Definition |
@@ -1122,6 +1323,10 @@ Those use cases are addressed by:
 | Webhook | HTTP callback from Stripe to notify of payment events |
 | Universal Search | Command palette interface (Cmd+K) for fast entity lookup and action execution |
 | Command Palette | Keyboard-triggered modal for quick access to search and actions |
+| Domain Event | Immutable record of something that happened in the system (e.g., TicketCompletedEvent) |
+| Event Bus | Infrastructure for publishing events and routing to subscribed handlers |
+| Event Handler | Component that reacts to specific domain events (e.g., AttributeExtractionHandler) |
+| State-Carrying Event | Event that includes the complete changed state, not just entity IDs |
 
 ---
 
@@ -1178,6 +1383,11 @@ Those use cases are addressed by:
 | 2025-01-08 | Two test users for RLS isolation | TEST_USER_ID and TEST_USER_B_ID enable cross-user visibility tests |
 | 2025-01-08 | load_dotenv with override=True | Shell env may have other project credentials; .env takes precedence |
 | 2025-01-08 | ValkeyClient is minimal redis-py wrapper | No async, no TTL monitoring - just get/set/delete/incr/json helpers |
+| 2025-01-16 | Synchronous event bus (no async/queues) | Simplicity, consistency, debugging - handlers complete before publish returns |
+| 2025-01-16 | State-carrying events | Prevents race conditions; handlers don't re-fetch stale data |
+| 2025-01-16 | Self-registering event handlers | No central wiring file; adding handler is single-file change |
+| 2025-01-16 | Error isolation in event handlers | Handler failures logged but don't cascade; search index failure shouldn't block ticket close |
+| 2025-01-16 | Native Anthropic SDK for LLM client | Direct API access, streaming support, tool use - no OpenRouter intermediary |
 
 ---
 
@@ -1192,6 +1402,11 @@ Key files in the MIRA codebase that demonstrate referenced patterns:
 | Data Routing | `cns/api/data.py` |
 | Database Client | `clients/postgres_client.py` |
 | Authentication | `auth/api.py` |
+| Event Definitions | `cns/core/events.py` |
+| Event Bus | `cns/integration/event_bus.py` |
+| Event Publishing | `cns/services/orchestrator.py` (see `_publish_events()`) |
+| Handler Registration | `working_memory/trinkets/*.py` (see `__init__` methods) |
+| LLM Client (Anthropic) | `clients/llm_client.py` |
 
 ---
 

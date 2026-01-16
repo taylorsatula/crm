@@ -114,7 +114,6 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request, Depends
 
 from api.base import success_response, error_response, APIResponse, ErrorCodes
-from utils.pagination import Cursor
 
 
 router = APIRouter(prefix="/api/data", tags=["data"])
@@ -138,21 +137,19 @@ def create_data_router(services: dict) -> APIRouter:
         id: UUID | None = Query(None, description="Specific entity ID"),
         search: str | None = Query(None, description="Search query"),
         include: str | None = Query(None, description="Comma-separated relations to include"),
-        limit: int = Query(20, ge=1, le=100),
-        cursor: str | None = Query(None, description="Pagination cursor from previous response"),
+        limit: int = Query(100, ge=1, le=500),
     ) -> APIResponse:
         """
         Unified data retrieval endpoint.
 
         Supports:
         - Single entity lookup: ?type=contacts&id=xxx
-        - List with pagination: ?type=contacts&limit=20
+        - List: ?type=contacts&limit=100
         - Search: ?type=contacts&search=john
-        - Cursor pagination: ?type=contacts&cursor=xxx
 
         Returns:
         - Single entity: {success: true, data: {entity}}
-        - List: {success: true, data: {items: [...], next_cursor: "...", has_more: bool}}
+        - List: {success: true, data: [{item}, {item}, ...]}
         """
         service = services.get(type)
         if not service:
@@ -178,21 +175,17 @@ def create_data_router(services: dict) -> APIRouter:
 
             # Search
             if search and hasattr(service, "search"):
-                result = service.search(search, limit=limit, cursor=cursor)
+                items = service.search(search, limit=limit)
             # List
             elif hasattr(service, "list"):
-                result = service.list(limit=limit, cursor=cursor)
+                items = service.list(limit=limit)
             else:
                 return error_response(
                     ErrorCodes.INVALID_REQUEST,
                     f"List operation not supported for {type}"
                 )
 
-            return success_response({
-                "items": [item.model_dump(mode="json") for item in result.items],
-                "next_cursor": result.next_cursor,
-                "has_more": result.has_more
-            })
+            return success_response([item.model_dump(mode="json") for item in items])
 
         except ValueError as e:
             return error_response(ErrorCodes.VALIDATION_ERROR, str(e))
@@ -382,7 +375,7 @@ def create_actions_router(handlers: dict) -> APIRouter:
 
 
 # Domain-specific action handlers
-# Pattern: thin wrapper that validates params, calls service, returns model_dump()
+# Pattern: thin wrapper that validates params, calls service, returns model_dump(mode="json")
 
 class ContactActionHandler:
     """Action handler for contact domain."""
@@ -437,7 +430,7 @@ class TicketActionHandler:
         result = self.ticket_service.initiate_close_out(UUID(ticket_id), confirmed_duration_minutes, notes)
         return {
             "ticket": result.ticket.model_dump(mode="json"),
-            "extracted_attributes": result.extracted_attributes.model_dump() if result.extracted_attributes else None
+            "extracted_attributes": result.extracted_attributes.model_dump(mode="json") if result.extracted_attributes else None
         }
 
     def finalize_close_out(self, ticket_id: str, confirmed_attributes: dict,

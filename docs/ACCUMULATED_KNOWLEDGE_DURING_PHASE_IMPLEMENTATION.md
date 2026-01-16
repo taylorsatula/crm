@@ -422,15 +422,15 @@ For entities created within tests, clean up explicitly at end of test.
 | Ticket | Soft | Audit trail, invoices |
 | Note | Soft | Audit trail |
 
-### Pagination Pattern (Inline)
+### List Method Pattern (Simple LIMIT)
 
-Not using a pagination module. Each list method implements directly:
+List methods return simple arrays without pagination complexity:
 
 ```python
-def list(self, limit: int = 50, offset: int = 0) -> list[Model]:
+def list(self, limit: int = 100) -> list[Model]:
     rows = self.postgres.execute(
-        "SELECT * FROM table ORDER BY created_at DESC LIMIT %s OFFSET %s",
-        (limit, offset)
+        "SELECT * FROM table ORDER BY created_at DESC LIMIT %s",
+        (limit,)
     )
     return [Model.model_validate(row) for row in rows]
 ```

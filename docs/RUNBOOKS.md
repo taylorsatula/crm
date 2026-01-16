@@ -107,7 +107,6 @@ from core.audit import AuditLogger, AuditAction, compute_changes
 from core.models.product import Product, ProductCreate, ProductUpdate
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
-from utils.pagination import Cursor, PaginatedResult, create_next_cursor
 
 
 class ProductService:
@@ -152,7 +151,7 @@ class ProductService:
         self.postgres.execute(f"UPDATE products SET {', '.join(set_clauses)} WHERE id = %s", tuple(values))
 
         new = self.get_by_id(product_id)
-        changes = compute_changes(old.model_dump(), new.model_dump())
+        changes = compute_changes(old.model_dump(mode="json"), new.model_dump(mode="json"))
         if changes:
             self.audit.log_change("product", product_id, AuditAction.UPDATE, changes)
         return new

@@ -324,136 +324,325 @@ def compute_changes(
 
 ---
 
-## 3.2 utils/pagination.py
+## 3.2 core/events.py
 
-**Purpose**: Cursor-based pagination utilities.
+**Purpose**: Domain event definitions for loose coupling between services.
 
 ### Implementation
 
 ```python
-import base64
-import json
-from uuid import UUID
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypeVar, Generic
-from pydantic import BaseModel
+from uuid import UUID, uuid4
+from typing import Any
+
+from utils.timezone import now_utc
+from utils.user_context import get_current_user_id
 
 
-class Cursor(BaseModel):
+@dataclass(frozen=True)
+class DomainEvent:
     """
-    Pagination cursor encoding a position in a result set.
+    Base class for all domain events.
 
-    The cursor encodes the sort key(s) of the last item returned.
-    Typically this is just the ID, but can include created_at for
-    time-sorted results.
+    Events are immutable and carry complete state to prevent
+    handlers from re-fetching stale data.
     """
-    id: str
-    created_at: str | None = None
-
-    def encode(self) -> str:
-        """Encode cursor as URL-safe string."""
-        data = self.model_dump(exclude_none=True)
-        json_str = json.dumps(data, sort_keys=True)
-        return base64.urlsafe_b64encode(json_str.encode()).decode()
-
-    @classmethod
-    def decode(cls, encoded: str) -> "Cursor":
-        """Decode cursor from URL-safe string."""
-        try:
-            json_str = base64.urlsafe_b64decode(encoded.encode()).decode()
-            data = json.loads(json_str)
-            return cls(**data)
-        except Exception as e:
-            raise ValueError(f"Invalid cursor: {e}")
+    event_id: UUID = field(default_factory=uuid4)
+    user_id: UUID = field(default_factory=get_current_user_id)
+    occurred_at: datetime = field(default_factory=now_utc)
 
 
-T = TypeVar("T")
+# === Ticket Events ===
+
+@dataclass(frozen=True)
+class TicketCreatedEvent(DomainEvent):
+    """Published when a new ticket is scheduled."""
+    ticket_id: UUID
+    contact_id: UUID
+    address_id: UUID
+    scheduled_at: datetime
 
 
-class PaginatedResult(BaseModel, Generic[T]):
+@dataclass(frozen=True)
+class TicketCompletedEvent(DomainEvent):
     """
-    Result of a paginated query.
+    Published when ticket close-out is finalized.
 
-    Includes items and cursor for next page.
+    Carries full state needed by handlers - they don't re-fetch.
     """
-    items: list[Any]  # Would be list[T] but Pydantic generics are tricky
-    next_cursor: str | None
-    has_more: bool
-
-    class Config:
-        arbitrary_types_allowed = True
-
-
-def build_cursor_query(
-    base_query: str,
-    cursor: Cursor | None,
-    sort_column: str = "id",
-    sort_direction: str = "ASC"
-) -> tuple[str, list[Any]]:
-    """
-    Build a cursor-paginated query.
-
-    Args:
-        base_query: Base SELECT query (without ORDER BY or LIMIT)
-        cursor: Cursor from previous page (None for first page)
-        sort_column: Column to sort by
-        sort_direction: ASC or DESC
-
-    Returns:
-        (query_with_pagination, params_to_append)
-    """
-    params = []
-    where_clause = ""
-
-    if cursor:
-        # Add cursor condition
-        operator = ">" if sort_direction.upper() == "ASC" else "<"
-        where_clause = f" AND {sort_column} {operator} %s"
-        params.append(cursor.id)
-
-    order = f"ORDER BY {sort_column} {sort_direction}"
-
-    # Check if query already has WHERE
-    if " WHERE " in base_query.upper():
-        query = f"{base_query}{where_clause} {order}"
-    else:
-        if where_clause:
-            # Remove leading AND
-            where_clause = "WHERE " + where_clause[5:]
-        query = f"{base_query} {where_clause} {order}"
-
-    return query, params
+    ticket_id: UUID
+    contact_id: UUID
+    notes: str | None
+    confirmed_attributes: dict[str, Any]
+    next_service_action: str  # "schedule_now", "reach_out", "no_followup"
+    reach_out_months: int | None
 
 
-def create_next_cursor(
-    items: list[dict[str, Any]],
-    limit: int,
-    sort_column: str = "id"
-) -> str | None:
-    """
-    Create cursor for next page if there are more results.
+# === Contact Events ===
 
-    Call with limit + 1 items; if you got limit + 1, there's a next page.
-    """
-    if len(items) <= limit:
-        return None
+@dataclass(frozen=True)
+class ContactCreatedEvent(DomainEvent):
+    """Published when a new contact is created."""
+    contact_id: UUID
+    name: str
+    email: str | None
+    phone: str | None
 
-    # Get the last item that will actually be returned (index limit - 1)
-    last_item = items[limit - 1]
 
-    cursor = Cursor(
-        id=str(last_item[sort_column]),
-        created_at=last_item.get("created_at", "").isoformat() if last_item.get("created_at") else None
-    )
+@dataclass(frozen=True)
+class ContactUpdatedEvent(DomainEvent):
+    """Published when contact data is modified."""
+    contact_id: UUID
+    changes: dict[str, dict[str, Any]]  # {field: {old, new}}
 
-    return cursor.encode()
+
+# === Invoice Events ===
+
+@dataclass(frozen=True)
+class InvoiceCreatedEvent(DomainEvent):
+    """Published when an invoice is generated."""
+    invoice_id: UUID
+    contact_id: UUID
+    ticket_id: UUID | None
+    total_amount: float
+
+
+@dataclass(frozen=True)
+class InvoiceSentEvent(DomainEvent):
+    """Published when invoice is emailed to customer."""
+    invoice_id: UUID
+    contact_id: UUID
+    payment_link: str | None
+
+
+@dataclass(frozen=True)
+class InvoicePaidEvent(DomainEvent):
+    """Published when payment is confirmed (from Stripe webhook)."""
+    invoice_id: UUID
+    contact_id: UUID
+    amount_paid: float
+
+
+# === Lead Events ===
+
+@dataclass(frozen=True)
+class LeadCreatedEvent(DomainEvent):
+    """Published when a lead is captured."""
+    lead_id: UUID
+    raw_notes: str
+
+
+@dataclass(frozen=True)
+class LeadConvertedEvent(DomainEvent):
+    """Published when a lead is converted to a customer."""
+    lead_id: UUID
+    contact_id: UUID
+
+
+# === Message Events ===
+
+@dataclass(frozen=True)
+class ScheduledMessageCreatedEvent(DomainEvent):
+    """Published when outreach is scheduled."""
+    message_id: UUID
+    contact_id: UUID
+    scheduled_for: datetime
+
+
+@dataclass(frozen=True)
+class ScheduledMessageSentEvent(DomainEvent):
+    """Published when scheduled message is delivered."""
+    message_id: UUID
+    contact_id: UUID
 ```
-
-**Usage:** See `ContactService.list()` in section 3.4 for complete implementation using these utilities.
 
 ---
 
-## 3.3 core/models/
+## 3.3 core/event_bus.py
+
+**Purpose**: Synchronous event bus for publishing and handling domain events.
+
+### Implementation
+
+```python
+import logging
+from typing import Callable, Any
+
+from core.events import DomainEvent
+
+logger = logging.getLogger(__name__)
+
+
+class EventBus:
+    """
+    Synchronous event bus for domain events.
+
+    Events execute handlers immediately in the publishing thread.
+    No async, no queues - when publish() returns, all handlers have completed.
+
+    Handler failures are logged but don't cascade - a search index failure
+    shouldn't prevent ticket close-out from completing.
+    """
+
+    def __init__(self):
+        self._subscribers: dict[str, list[Callable[[DomainEvent], None]]] = {}
+
+    def subscribe(self, event_type: str, callback: Callable[[DomainEvent], None]) -> None:
+        """
+        Register handler for event type.
+
+        Args:
+            event_type: Event class name (e.g., "TicketCompletedEvent")
+            callback: Function that accepts the event
+        """
+        if event_type not in self._subscribers:
+            self._subscribers[event_type] = []
+        self._subscribers[event_type].append(callback)
+        logger.debug(f"Subscribed {callback.__qualname__} to {event_type}")
+
+    def publish(self, event: DomainEvent) -> None:
+        """
+        Publish event to all subscribers.
+
+        Executes handlers synchronously. Exceptions are logged but
+        don't stop other handlers from executing.
+        """
+        event_type = event.__class__.__name__
+        handlers = self._subscribers.get(event_type, [])
+
+        logger.debug(f"Publishing {event_type} to {len(handlers)} handlers")
+
+        for callback in handlers:
+            try:
+                callback(event)
+            except Exception as e:
+                # Log but don't cascade - other handlers should still run
+                logger.error(
+                    f"Handler {callback.__qualname__} failed for {event_type}: {e}",
+                    exc_info=True
+                )
+
+    def subscriber_count(self, event_type: str) -> int:
+        """Get number of subscribers for an event type."""
+        return len(self._subscribers.get(event_type, []))
+```
+
+---
+
+## 3.4 core/handlers/
+
+**Purpose**: Event handlers that react to domain events.
+
+### 3.4.1 core/handlers/scheduled_message_handler.py
+
+```python
+import logging
+from uuid import uuid4
+from datetime import timedelta
+
+from core.events import TicketCompletedEvent
+from core.event_bus import EventBus
+from clients.postgres_client import PostgresClient
+from utils.timezone import now_utc
+from utils.user_context import get_current_user_id
+
+logger = logging.getLogger(__name__)
+
+
+class ScheduledMessageHandler:
+    """
+    Creates scheduled messages based on ticket close-out choices.
+
+    Listens to TicketCompletedEvent and creates reach-out messages
+    when technician selects "reach out in X months".
+    """
+
+    def __init__(self, event_bus: EventBus, postgres: PostgresClient):
+        self.postgres = postgres
+        # Self-register with event bus
+        event_bus.subscribe("TicketCompletedEvent", self.handle_ticket_completed)
+        logger.info("ScheduledMessageHandler registered")
+
+    def handle_ticket_completed(self, event: TicketCompletedEvent) -> None:
+        """Create scheduled message if reach-out was requested."""
+        if event.next_service_action != "reach_out" or not event.reach_out_months:
+            return
+
+        now = now_utc()
+        scheduled_for = now + timedelta(days=event.reach_out_months * 30)
+
+        self.postgres.execute(
+            """
+            INSERT INTO scheduled_messages
+                (id, user_id, contact_id, template_name, scheduled_for, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s)
+            """,
+            (uuid4(), event.user_id, event.contact_id, "service_reminder", scheduled_for, now)
+        )
+
+        logger.info(
+            f"Scheduled reach-out for contact {event.contact_id} "
+            f"in {event.reach_out_months} months"
+        )
+```
+
+### 3.4.2 core/handlers/attribute_persistence_handler.py
+
+```python
+import logging
+from uuid import uuid4
+
+from psycopg.types.json import Json
+
+from core.events import TicketCompletedEvent
+from core.event_bus import EventBus
+from clients.postgres_client import PostgresClient
+from utils.timezone import now_utc
+
+logger = logging.getLogger(__name__)
+
+
+class AttributePersistenceHandler:
+    """
+    Persists confirmed attributes to contact record.
+
+    The extraction itself happens during close-out wizard with human validation.
+    This handler just persists the already-confirmed attributes.
+    """
+
+    def __init__(self, event_bus: EventBus, postgres: PostgresClient):
+        self.postgres = postgres
+        event_bus.subscribe("TicketCompletedEvent", self.handle_ticket_completed)
+        logger.info("AttributePersistenceHandler registered")
+
+    def handle_ticket_completed(self, event: TicketCompletedEvent) -> None:
+        """Persist confirmed attributes to contact."""
+        if not event.confirmed_attributes:
+            return
+
+        now = now_utc()
+
+        for key, value in event.confirmed_attributes.items():
+            self.postgres.execute(
+                """
+                INSERT INTO attributes (id, user_id, contact_id, key, value, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (contact_id, key)
+                DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                """,
+                (uuid4(), event.user_id, event.contact_id, key, Json(value), now, now)
+            )
+
+        logger.info(
+            f"Persisted {len(event.confirmed_attributes)} attributes "
+            f"for contact {event.contact_id}"
+        )
+```
+
+---
+
+## 3.5 core/models/
 
 **Purpose**: Pydantic models for all domain entities.
 
@@ -551,7 +740,7 @@ class MessageStatus(Enum):
 
 ---
 
-## 3.4 core/services/contact_service.py
+## 3.6 core/services/contact_service.py
 
 **Purpose**: Business logic for contact management.
 
@@ -567,7 +756,6 @@ from core.models.contact import Contact, ContactCreate, ContactUpdate, ContactWi
 from core.models.address import Address
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
-from utils.pagination import Cursor, PaginatedResult, build_cursor_query, create_next_cursor
 
 
 class ContactService:
@@ -666,7 +854,7 @@ class ContactService:
 
         # Get new state and compute changes
         new = self.get_by_id(contact_id)
-        changes = compute_changes(old.model_dump(), new.model_dump())
+        changes = compute_changes(old.model_dump(mode="json"), new.model_dump(mode="json"))
 
         if changes:
             self.audit.log_change(
@@ -700,76 +888,33 @@ class ContactService:
             changes={"deleted": old.model_dump(mode="json")}
         )
 
-    def list(
-        self,
-        limit: int = 20,
-        cursor: str | None = None
-    ) -> PaginatedResult:
-        """List contacts with cursor pagination."""
-        cursor_obj = Cursor.decode(cursor) if cursor else None
+    def list(self, limit: int = 100) -> list[Contact]:
+        """List contacts ordered by creation date."""
+        query = "SELECT * FROM contacts ORDER BY created_at DESC LIMIT %s"
+        results = self.postgres.execute(query, (limit,))
+        return [Contact(**r) for r in results]
 
-        base_query = "SELECT * FROM contacts"
-        query, params = build_cursor_query(base_query, cursor_obj)
-        query += " LIMIT %s"
-        params.append(limit + 1)
-
-        results = self.postgres.execute(query, tuple(params))
-
-        has_more = len(results) > limit
-        items = [Contact(**r) for r in results[:limit]]
-        next_cursor = create_next_cursor(results, limit) if has_more else None
-
-        return PaginatedResult(
-            items=items,
-            next_cursor=next_cursor,
-            has_more=has_more
-        )
-
-    def search(
-        self,
-        query: str,
-        limit: int = 20,
-        cursor: str | None = None
-    ) -> PaginatedResult:
+    def search(self, query: str, limit: int = 100) -> list[Contact]:
         """
         Search contacts by name, email, phone.
 
         Uses ILIKE for simple substring matching.
         TODO: Upgrade to full-text search or trigram matching.
         """
-        cursor_obj = Cursor.decode(cursor) if cursor else None
         search_pattern = f"%{query}%"
-
-        base_query = """
+        sql = """
             SELECT * FROM contacts
             WHERE (name ILIKE %s OR email ILIKE %s OR phone ILIKE %s)
+            ORDER BY created_at DESC
+            LIMIT %s
         """
-        base_params = [search_pattern, search_pattern, search_pattern]
-
-        # Add cursor condition if present
-        if cursor_obj:
-            base_query += " AND id > %s"
-            base_params.append(cursor_obj.id)
-
-        base_query += " ORDER BY id LIMIT %s"
-        base_params.append(limit + 1)
-
-        results = self.postgres.execute(base_query, tuple(base_params))
-
-        has_more = len(results) > limit
-        items = [Contact(**r) for r in results[:limit]]
-        next_cursor = create_next_cursor(results, limit) if has_more else None
-
-        return PaginatedResult(
-            items=items,
-            next_cursor=next_cursor,
-            has_more=has_more
-        )
+        results = self.postgres.execute(sql, (search_pattern, search_pattern, search_pattern, limit))
+        return [Contact(**r) for r in results]
 ```
 
 ---
 
-## 3.5 core/services/ticket_service.py
+## 3.7 core/services/ticket_service.py
 
 **Purpose**: Ticket lifecycle management including close-out flow.
 
@@ -783,6 +928,8 @@ from enum import Enum
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.event_bus import EventBus
+from core.events import TicketCreatedEvent, TicketCompletedEvent
 from core.models.ticket import (
     Ticket, TicketCreate, TicketUpdate, TicketStatus, TicketWithDetails
 )
@@ -821,17 +968,23 @@ class TicketService:
     - Clock in/out
     - Line item management
     - Close-out flow with attribute extraction
+
+    Publishes events for loose coupling:
+    - TicketCreatedEvent on create()
+    - TicketCompletedEvent on finalize_close_out()
     """
 
     def __init__(
         self,
         postgres: PostgresClient,
         audit: AuditLogger,
-        extractor: AttributeExtractor
+        extractor: AttributeExtractor,
+        event_bus: EventBus
     ):
         self.postgres = postgres
         self.audit = audit
         self.extractor = extractor
+        self.event_bus = event_bus
 
     def create(self, data: TicketCreate) -> Ticket:
         """Create new ticket."""
@@ -861,6 +1014,14 @@ class TicketService:
             action=AuditAction.CREATE,
             changes={"created": ticket.model_dump(mode="json")}
         )
+
+        # Publish event for handlers
+        self.event_bus.publish(TicketCreatedEvent(
+            ticket_id=ticket_id,
+            contact_id=data.contact_id,
+            address_id=data.address_id,
+            scheduled_at=data.scheduled_at
+        ))
 
         return ticket
 
@@ -1047,7 +1208,10 @@ class TicketService:
         """
         Finalize close-out after technician confirms extracted attributes.
 
-        This is step 2: save attributes, handle follow-up, close ticket.
+        This is step 2: close ticket and publish TicketCompletedEvent.
+        Event handlers handle the downstream work:
+        - AttributePersistenceHandler saves confirmed attributes
+        - ScheduledMessageHandler creates reach-out messages
 
         Args:
             ticket_id: Ticket to close
@@ -1062,34 +1226,7 @@ class TicketService:
         if ticket.closed_at:
             raise ValueError("Ticket already closed")
 
-        user_id = get_current_user_id()
         now = now_utc()
-
-        # Save confirmed attributes to contact
-        if confirmed_attributes:
-            for key, value in confirmed_attributes.items():
-                self.postgres.execute(
-                    """
-                    INSERT INTO attributes (id, user_id, contact_id, key, value, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (contact_id, key)
-                    DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
-                    """,
-                    (uuid4(), user_id, ticket.contact_id, key, Json(value), now, now)
-                )
-
-        # Handle follow-up scheduling
-        if next_service == NextServiceAction.REACH_OUT and reach_out_months:
-            from datetime import timedelta
-            reach_out_date = now + timedelta(days=reach_out_months * 30)
-            self.postgres.execute(
-                """
-                INSERT INTO scheduled_messages
-                    (id, user_id, contact_id, template_name, scheduled_for, status, created_at)
-                VALUES (%s, %s, %s, %s, %s, 'pending', %s)
-                """,
-                (uuid4(), user_id, ticket.contact_id, "service_reminder", reach_out_date, now)
-            )
 
         # Close the ticket (now immutable)
         self.postgres.execute(
@@ -1111,37 +1248,52 @@ class TicketService:
             }
         )
 
+        # Publish event - handlers do the downstream work
+        # (attribute persistence, scheduled messages, etc.)
+        self.event_bus.publish(TicketCompletedEvent(
+            ticket_id=ticket_id,
+            contact_id=ticket.contact_id,
+            notes=ticket.notes,
+            confirmed_attributes=confirmed_attributes,
+            next_service_action=next_service.value,
+            reach_out_months=reach_out_months
+        ))
+
         return self.get_by_id(ticket_id)
 ```
 
 ---
 
-## 3.6 core/extraction.py
+## 3.8 core/extraction.py
 
 **Purpose**: LLM-powered attribute extraction from notes.
 
 ### Implementation
 
 ```python
+import json
+import logging
 from typing import Any
 from pydantic import BaseModel
 
 from clients.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractedAttributes(BaseModel):
     """Attributes extracted from technician notes."""
     attributes: dict[str, Any]
     raw_response: str  # For debugging
-    confidence: float  # 0-1 confidence score
+    thinking: str | None = None  # Model's reasoning (from extended thinking)
 
 
 class AttributeExtractor:
     """
     Extract structured attributes from free-form technician notes.
 
-    Uses LLM to identify entities and facts that should become
-    queryable attributes on the customer record.
+    Uses Anthropic LLM with extended thinking to identify entities and facts
+    that should become queryable attributes on the customer record.
     """
 
     SYSTEM_PROMPT = """You are an assistant that extracts structured information from service technician notes.
@@ -1156,7 +1308,7 @@ Categories to look for:
 - service_preferences: customer preferences about timing, methods, etc.
 - property_details: physical property characteristics
 
-Output JSON with extracted attributes. Only include attributes you're confident about.
+Output ONLY valid JSON with extracted attributes. Only include attributes you're confident about.
 Use snake_case keys. Values should be strings or simple objects.
 
 Example input: "Elderly woman, very nice. Dog named Biscuit, keep gate closed. Complex sill on 2nd story, brought extension ladder."
@@ -1180,31 +1332,45 @@ Example output:
 
         This is called synchronously during close-out so the
         technician can review extracted attributes before confirming.
+
+        Uses extended thinking (default in LLMClient) to let the model
+        reason through what attributes to extract.
         """
         response = self.llm.generate(
             messages=[
                 {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": f"Extract attributes from these notes:\n\n{notes}"}
             ],
-            response_format={"type": "json_object"}
+            thinking=True,  # Enable extended thinking for better extraction
+            thinking_budget=512,  # Modest budget for this task
+            max_tokens=1024
         )
 
-        import json
+        # Parse JSON from response
         try:
-            attributes = json.loads(response.content)
-        except json.JSONDecodeError:
+            # Try to extract JSON from the response
+            content = response.content.strip()
+            # Handle case where model wraps in markdown code block
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+                content = content.strip()
+            attributes = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse extraction response as JSON: {e}")
             attributes = {}
 
         return ExtractedAttributes(
             attributes=attributes,
             raw_response=response.content,
-            confidence=0.8  # TODO: Calculate based on model response
+            thinking=response.thinking  # Include model's reasoning for debugging
         )
 ```
 
 ---
 
-## 3.7 Additional Services
+## 3.9 Additional Services
 
 Create similar services for remaining entities following the patterns above:
 
@@ -1225,21 +1391,31 @@ Before proceeding to Phase 4:
 
 ### Unit Tests
 
-- [ ] `pytest tests/test_audit.py` - all tests pass
-- [ ] `pytest tests/test_pagination.py` - all tests pass
-- [ ] `pytest tests/test_contact_service.py` - all tests pass
-- [ ] `pytest tests/test_ticket_service.py` - all tests pass
+- [ ] `pytest tests/core/test_audit.py` - all tests pass
+- [ ] `pytest tests/core/test_events.py` - all tests pass
+- [ ] `pytest tests/core/test_event_bus.py` - all tests pass
+- [ ] `pytest tests/core/services/test_contact_service.py` - all tests pass
+- [ ] `pytest tests/core/services/test_ticket_service.py` - all tests pass
+- [ ] `pytest tests/core/handlers/test_scheduled_message_handler.py` - all tests pass
+- [ ] `pytest tests/core/handlers/test_attribute_persistence_handler.py` - all tests pass
 
 ### Integration Tests
 
 - [ ] Can create contact → create address → create ticket flow
 - [ ] Clock in/out updates ticket correctly
 - [ ] Line items can be added to tickets
-- [ ] Close-out flow extracts attributes
+- [ ] Close-out flow extracts attributes via LLM
 - [ ] Closed tickets cannot be modified
 - [ ] Audit trail captures all changes
-- [ ] Cursor pagination works correctly (test with 50+ records)
 - [ ] RLS prevents cross-user data access
+
+### Event System Tests
+
+- [ ] TicketCreatedEvent published on ticket creation
+- [ ] TicketCompletedEvent published on close-out
+- [ ] ScheduledMessageHandler creates reach-out message when requested
+- [ ] AttributePersistenceHandler saves confirmed attributes
+- [ ] Handler failures don't cascade (other handlers still run)
 
 ### Data Integrity
 

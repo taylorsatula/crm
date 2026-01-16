@@ -50,7 +50,10 @@ from auth.api import router as auth_router
 
 # Core components
 from core.audit import AuditLogger
+from core.event_bus import EventBus
 from core.extraction import AttributeExtractor
+from core.handlers.scheduled_message_handler import ScheduledMessageHandler
+from core.handlers.attribute_persistence_handler import AttributePersistenceHandler
 from core.services.contact_service import ContactService
 from core.services.address_service import AddressService
 from core.services.catalog_service import CatalogService
@@ -77,6 +80,7 @@ from api.actions import (
 vault: VaultClient = None
 postgres: PostgresClient = None
 valkey: ValkeyClient = None
+event_bus: EventBus = None
 auth_config: AuthConfig = None
 auth_service: AuthService = None
 
@@ -88,7 +92,7 @@ async def lifespan(app: FastAPI):
 
     Handles startup (initializing clients) and shutdown (cleanup).
     """
-    global vault, postgres, valkey, auth_config, auth_service
+    global vault, postgres, valkey, event_bus, auth_config, auth_service
 
     # ===== STARTUP =====
 
@@ -105,13 +109,15 @@ async def lifespan(app: FastAPI):
     print("Initializing LLM client...")
     llm_config = vault.get_secret("crm/llm")
     llm = LLMClient(
-        local_endpoint=llm_config.get("local_endpoint"),
-        remote_provider=llm_config.get("remote_provider"),
-        remote_api_key=llm_config.get("remote_api_key"),
-        prefer_local=llm_config.get("prefer_local", True)
+        api_key=llm_config["api_key"],
+        model=llm_config.get("model")  # Optional, defaults to claude-haiku-4-5
     )
 
-    # 2. Initialize auth components
+    # 2. Initialize event bus (before services that publish events)
+    print("Initializing event bus...")
+    event_bus = EventBus()
+
+    # 3. Initialize auth components
     print("Initializing auth system...")
     auth_config = load_auth_config()
 
@@ -139,7 +145,7 @@ async def lifespan(app: FastAPI):
         config=auth_config
     )
 
-    # 3. Initialize core services
+    # 4. Initialize core services
     print("Initializing core services...")
     audit = AuditLogger(postgres)
     extractor = AttributeExtractor(llm)
@@ -147,13 +153,18 @@ async def lifespan(app: FastAPI):
     contact_service = ContactService(postgres, audit)
     address_service = AddressService(postgres, audit)
     catalog_service = CatalogService(postgres, audit)
-    ticket_service = TicketService(postgres, audit, extractor)
+    ticket_service = TicketService(postgres, audit, extractor, event_bus)
     invoice_service = InvoiceService(postgres, audit)
     note_service = NoteService(postgres, audit)
     attribute_service = AttributeService(postgres, audit)
     message_service = MessageService(postgres, audit)
 
-    # 4. Create routers with dependencies
+    # 5. Wire up event handlers (self-register with event_bus)
+    print("Wiring event handlers...")
+    ScheduledMessageHandler(event_bus, message_service, postgres)
+    AttributePersistenceHandler(event_bus, attribute_service, postgres)
+
+    # 6. Create routers with dependencies
     print("Creating API routers...")
 
     # Health router
@@ -191,6 +202,7 @@ async def lifespan(app: FastAPI):
     app.state.services = data_services
     app.state.auth_service = auth_service
     app.state.session_manager = session_manager
+    app.state.event_bus = event_bus
 
     print("Application startup complete!")
 
@@ -382,7 +394,7 @@ crm/
 │   ├── models/                 # Pydantic models per entity
 │   └── services/               # Business logic per entity
 ├── utils/
-│   ├── timezone.py, user_context.py, pagination.py
+│   ├── timezone.py, user_context.py
 ├── templates/                  # Jinja2 (auth/, calendar/, contacts/, tickets/)
 ├── static/                     # CSS, JS
 ├── tests/                      # Test suite (test_*.py)

@@ -253,7 +253,7 @@
     │  State mutations │     │  Read operations │
     │  Domain routing  │     │  Type routing    │
     │  Audit logging   │     │  Expansion       │
-    │                  │     │  Pagination      │
+    │                  │     │                  │
     │  DEPENDS ON:     │     │                  │
     │  - all core/     │     │  DEPENDS ON:     │
     │    services      │     │  - all core/     │
@@ -290,9 +290,11 @@
     │  clients/        │
     │  llm_client.py   │
     │                  │
-    │  OpenAI-compat   │
-    │  interface       │
-    │  (Qwen3 initial) │
+    │  Anthropic SDK   │
+    │  - Streaming     │
+    │  - Tool use      │
+    │  - Extended      │
+    │    thinking      │
     │                  │
     │  DEPENDS ON:     │
     │  - vault_client  │
@@ -325,6 +327,79 @@
     │     lead.create() → extract_lead_data(raw_notes)         │
     │                   → populate editable fields             │
     │                   → user reviews/edits before save       │
+    └──────────────────────────────────────────────────────────┘
+
+
+═══ EVENT SYSTEM (Parallel with Phase 3) ═══
+
+    ┌──────────────────┐
+    │  core/           │
+    │  events.py       │
+    │                  │
+    │  Domain event    │
+    │  definitions     │
+    │  - Ticket*Event  │
+    │  - Contact*Event │
+    │  - Invoice*Event │
+    │  - Lead*Event    │
+    │                  │
+    │  NO DEPS         │
+    │  (just dataclass)│
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  core/           │
+    │  event_bus.py    │
+    │                  │
+    │  EventBus class  │
+    │  - subscribe()   │
+    │  - publish()     │
+    │  Synchronous     │
+    │  execution       │
+    │                  │
+    │  NO DEPS         │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  core/handlers/ (Event Handlers)                         │
+    ├──────────────────────────────────────────────────────────┤
+    │                                                          │
+    │  ┌────────────────────┐     ┌────────────────────┐      │
+    │  │ attribute_         │     │ scheduled_message_ │      │
+    │  │ extraction_handler │     │ handler            │      │
+    │  │                    │     │                    │      │
+    │  │ Listens:           │     │ Listens:           │      │
+    │  │ TicketCompleted    │     │ TicketCompleted    │      │
+    │  │                    │     │                    │      │
+    │  │ Action:            │     │ Action:            │      │
+    │  │ Persist validated  │     │ Create reach-out   │      │
+    │  │ attributes to      │     │ message if         │      │
+    │  │ contact            │     │ requested          │      │
+    │  │                    │     │                    │      │
+    │  │ DEPENDS ON:        │     │ DEPENDS ON:        │      │
+    │  │ - event_bus        │     │ - event_bus        │      │
+    │  │ - contact_service  │     │ - message_service  │      │
+    │  └────────────────────┘     └────────────────────┘      │
+    │                                                          │
+    │  Future: search_index_handler, notification_handler      │
+    └──────────────────────────────────────────────────────────┘
+             │
+             ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  Services publish events after state changes:            │
+    │                                                          │
+    │  ticket_service.close()                                  │
+    │     └── event_bus.publish(TicketCompletedEvent(...))     │
+    │                                                          │
+    │  contact_service.update()                                │
+    │     └── event_bus.publish(ContactUpdatedEvent(...))      │
+    │                                                          │
+    │  invoice_service.send()                                  │
+    │     └── event_bus.publish(InvoiceSentEvent(...))         │
+    │                                                          │
+    │  Handlers execute synchronously before publish returns   │
     └──────────────────────────────────────────────────────────┘
 
 

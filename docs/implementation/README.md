@@ -7,10 +7,10 @@ Step-by-step instructions for implementing the CRM system. Each phase builds on 
 This system is built to **replace Square Appointments**, not become it. Every architectural decision prioritizes long-term maintainability over short-term convenience. We don't take shortcuts that accumulate into the kind of technical debt that makes systems painful to evolve.
 
 Key principles:
-- **Cursor-based pagination everywhere** — offset pagination breaks under concurrent modifications and doesn't scale
 - **Fail-fast on infrastructure errors** — silent failures create debugging nightmares
 - **RLS at the database level** — user isolation is a guarantee, not a hope
 - **Explicit over clever** — boring, predictable code that's easy to understand
+- **Simplicity over premature optimization** — implement exactly what's needed, no more
 
 ---
 
@@ -105,34 +105,29 @@ Soft delete implementation:
 - "Delete" operations set `deleted_at = now()`
 - Admin queries can include deleted records when needed
 
-### 4. Pagination Style
+### 4. List Endpoints
 
-**Decision**: Cursor-based pagination from day one
+**Decision**: Simple limit-based lists without pagination
 
-Offset-based pagination (`LIMIT 20 OFFSET 40`) has fundamental problems:
-- Skips or duplicates items when data changes between pages
-- Performance degrades on large offsets (`OFFSET 10000` scans 10000 rows)
-- Doesn't work reliably with concurrent writes
+For a single-user business CRM, dataset sizes are naturally bounded:
+- Typical service business has 100-1000 active customers
+- Tickets per year: 500-5000
+- Full list queries complete in <100ms
 
-Cursor-based pagination uses a stable reference point:
+Simple approach:
 ```
-GET /api/data?type=contacts&limit=20&after=eyJpZCI6IjEyMzQ1In0
-```
-
-The cursor encodes the last item's sort key (typically `id` or `created_at`). Queries use:
-```sql
-SELECT * FROM contacts
-WHERE id > $cursor_id
-ORDER BY id
-LIMIT 20
+GET /api/data?type=contacts&limit=100
 ```
 
-This is slightly more complex to implement but:
-- Always consistent, regardless of concurrent changes
-- Constant performance regardless of position in dataset
-- Required for any real-time or collaborative features later
+Returns up to `limit` items, newest first. No pagination cursors, no complex state management. If you need more items, increase the limit.
 
-**Implementation pattern**: See Phase 4 for cursor encoding/decoding utilities.
+**Benefits**:
+- Simpler client code (no cursor tracking, no "load more" logic)
+- Simpler server code (no cursor encoding/decoding utilities)
+- Works perfectly for the actual scale of the problem
+- Can add pagination later if datasets grow beyond expectations
+
+**When to reconsider**: If a single entity type regularly exceeds 10,000 active records.
 
 ### 5. Frontend Approach
 
@@ -253,8 +248,7 @@ crm/
 ├── utils/
 │   ├── __init__.py
 │   ├── timezone.py
-│   ├── user_context.py
-│   └── pagination.py
+│   └── user_context.py
 ├── templates/
 │   ├── base.html
 │   ├── auth/

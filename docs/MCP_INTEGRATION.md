@@ -55,7 +55,7 @@ Discover available operations. Call this first to understand what actions you ca
 
 #### `crm_query`
 
-Query CRM data with filters, pagination, and relation expansion.
+Query CRM data with filters, limits, and relation expansion.
 
 ```json
 {
@@ -86,11 +86,7 @@ Query CRM data with filters, pagination, and relation expansion.
       },
       "limit": {
         "type": "integer",
-        "description": "Max results (default 20, max 100)"
-      },
-      "cursor": {
-        "type": "string",
-        "description": "Pagination cursor from previous response"
+        "description": "Max results (default 100, max 500)"
       }
     },
     "required": ["type"]
