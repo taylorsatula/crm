@@ -177,22 +177,20 @@ def get_email_config() -> Dict[str, str]:
 
 
 def get_llm_config() -> Dict[str, str]:
-    """Get LLM API configuration from Vault."""
+    """Get Anthropic API key from Vault.
+
+    Returns:
+        Dict with key: api_key
+    """
+    cache_key = "crm/llm/api_key"
+
+    if cache_key in _secret_cache:
+        return {"api_key": _secret_cache[cache_key]}
+
     client = _ensure_vault_client()
-
-    fields = ["api_key", "base_url", "model_name"]
-    result = {}
-
-    for field in fields:
-        cache_key = f"crm/llm/{field}"
-        if cache_key in _secret_cache:
-            result[field] = _secret_cache[cache_key]
-        else:
-            value = client.get_secret("llm", field)
-            _secret_cache[cache_key] = value
-            result[field] = value
-
-    return result
+    value = client.get_secret("llm", "api_key")
+    _secret_cache[cache_key] = value
+    return {"api_key": value}
 
 
 def get_stripe_config() -> Dict[str, str]:

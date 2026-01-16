@@ -38,19 +38,14 @@ Categories to look for:
 - service_preferences: customer preferences about timing, methods, etc.
 - property_details: physical property characteristics
 
-Output JSON with extracted attributes. Only include attributes you're confident about.
-Use snake_case keys. Values should be strings or simple objects.
+Only include attributes you're confident about. Use snake_case keys. Values should be strings or simple objects.
+
+IMPORTANT: Output raw JSON only. Do not wrap in code fences. Do not include any text before or after the JSON.
 
 Example input: "Elderly woman, very nice. Dog named Biscuit, keep gate closed. Complex sill on 2nd story, brought extension ladder."
 
-Example output:
-{
-  "customer_demographic": "elderly",
-  "pet": {"type": "dog", "name": "Biscuit"},
-  "property_notes": "keep gate closed",
-  "equipment_needed": "extension ladder",
-  "property_details": "complex 2nd story sill"
-}
+Example of correct output:
+{"customer_demographic": "elderly", "pet": {"type": "dog", "name": "Biscuit"}, "property_notes": "keep gate closed", "equipment_needed": "extension ladder", "property_details": "complex 2nd story sill"}
 """
 
     def __init__(self, llm: LLMClient):
@@ -73,8 +68,7 @@ Example output:
             messages=[
                 {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": f"Extract attributes from these notes:\n\n{notes}"}
-            ],
-            response_format={"type": "json_object"}
+            ]
         )
 
         raw_content = response.content

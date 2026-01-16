@@ -116,20 +116,6 @@ class TestAttributeExtractor:
         assert messages[1]["role"] == "user"
         assert "Customer has 2 large dogs" in messages[1]["content"]
 
-    def test_requests_json_response_format(self):
-        """Requests JSON output format from LLM."""
-        from core.extraction import AttributeExtractor
-        from clients.llm_client import LLMResponse
-
-        mock_llm = Mock()
-        mock_llm.generate.return_value = LLMResponse(content='{}', raw_response=None)
-
-        extractor = AttributeExtractor(mock_llm)
-        extractor.extract_attributes("Test notes")
-
-        call_kwargs = mock_llm.generate.call_args.kwargs
-        assert call_kwargs.get("response_format") == {"type": "json_object"}
-
     def test_confidence_is_decimal(self):
         """Confidence is returned as Decimal."""
         from core.extraction import AttributeExtractor
