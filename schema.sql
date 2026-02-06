@@ -354,7 +354,7 @@ CREATE INDEX idx_tickets_user ON tickets(user_id);
 CREATE INDEX idx_tickets_customer ON tickets(customer_id);
 CREATE INDEX idx_tickets_scheduled ON tickets(user_id, scheduled_at);
 CREATE INDEX idx_tickets_status ON tickets(user_id, status);
-CREATE INDEX idx_tickets_date ON tickets(user_id, (scheduled_at::date));
+CREATE INDEX idx_tickets_date ON tickets(user_id, ((scheduled_at AT TIME ZONE 'UTC')::date));
 
 -- RLS
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;

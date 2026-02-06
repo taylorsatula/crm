@@ -6,7 +6,7 @@ Tickets are immutable after being closed.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, time, timezone, timedelta
 from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
@@ -393,6 +393,50 @@ class TicketService:
         )
 
         return [Ticket.model_validate(row) for row in rows]
+
+    def list_today(self) -> list[Ticket]:
+        """
+        List tickets scheduled for today (UTC).
+
+        Returns:
+            List of tickets scheduled today, ordered by scheduled_at ASC
+        """
+        today = now_utc().date()
+        today_start = datetime.combine(today, time.min, tzinfo=timezone.utc)
+        tomorrow_start = datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM tickets
+            WHERE scheduled_at >= %s AND scheduled_at < %s
+            ORDER BY scheduled_at ASC
+            """,
+            (today_start, tomorrow_start)
+        )
+
+        return [Ticket.model_validate(row) for row in rows]
+
+    def get_current(self) -> Ticket | None:
+        """
+        Get the currently in-progress ticket.
+
+        Returns:
+            In-progress ticket or None if no ticket is being worked on.
+        """
+        row = self.postgres.execute_single(
+            """
+            SELECT * FROM tickets
+            WHERE status = %s
+            ORDER BY clock_in_at DESC
+            LIMIT 1
+            """,
+            (TicketStatus.IN_PROGRESS.value,)
+        )
+
+        if row is None:
+            return None
+
+        return Ticket.model_validate(row)
 
     def list_for_customer(self, customer_id: UUID, limit: int = 50) -> list[Ticket]:
         """

@@ -2,7 +2,7 @@
 
 import pytest
 from uuid import uuid4
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from utils.timezone import now_utc
 
@@ -315,3 +315,114 @@ class TestTicketList:
         # Cleanup
         customer_service.delete(customer_a.id)
         customer_service.delete(customer_b.id)
+
+
+class TestTicketListToday:
+    """Tests for TicketService.list_today."""
+
+    def test_returns_tickets_scheduled_today(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """list_today returns only today's tickets."""
+        from core.models import TicketCreate
+        from datetime import date, time, timezone
+
+        today = date.today()
+        today_morning = datetime.combine(today, time(9, 0), tzinfo=timezone.utc)
+        tomorrow_morning = datetime.combine(today + timedelta(days=1), time(9, 0), tzinfo=timezone.utc)
+
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=today_morning
+        ))
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=tomorrow_morning
+        ))
+
+        tickets = ticket_service.list_today()
+
+        assert len(tickets) == 1
+        assert tickets[0].scheduled_at.date() == today
+
+    def test_returns_empty_when_no_tickets_today(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """list_today returns empty list when no tickets scheduled today."""
+        from core.models import TicketCreate
+        from datetime import date, time, timezone
+
+        tomorrow = date.today() + timedelta(days=1)
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=datetime.combine(tomorrow, time(9, 0), tzinfo=timezone.utc)
+        ))
+
+        tickets = ticket_service.list_today()
+
+        assert tickets == []
+
+    def test_ordered_by_scheduled_at(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """list_today orders tickets by scheduled_at ascending."""
+        from core.models import TicketCreate
+        from datetime import date, time, timezone
+
+        today = date.today()
+        afternoon = datetime.combine(today, time(14, 0), tzinfo=timezone.utc)
+        morning = datetime.combine(today, time(8, 0), tzinfo=timezone.utc)
+
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=afternoon
+        ))
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=morning
+        ))
+
+        tickets = ticket_service.list_today()
+
+        assert len(tickets) == 2
+        assert tickets[0].scheduled_at < tickets[1].scheduled_at
+
+
+class TestTicketGetCurrent:
+    """Tests for TicketService.get_current."""
+
+    def test_returns_in_progress_ticket(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """get_current returns in-progress ticket."""
+        from core.models import TicketCreate, TicketStatus
+
+        ticket = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=now_utc() + timedelta(hours=1)
+        ))
+        ticket_service.clock_in(ticket.id)
+
+        current = ticket_service.get_current()
+
+        assert current is not None
+        assert current.id == ticket.id
+        assert current.status == TicketStatus.IN_PROGRESS
+
+    def test_returns_none_when_only_scheduled(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """get_current returns None when tickets exist but none are in-progress."""
+        from core.models import TicketCreate
+
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=now_utc() + timedelta(hours=1)
+        ))
+
+        current = ticket_service.get_current()
+
+        assert current is None
+
+    def test_returns_none_when_no_tickets(self, db, as_test_user, ticket_service):
+        """get_current returns None when no tickets exist."""
+        current = ticket_service.get_current()
+
+        assert current is None
