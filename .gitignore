@@ -5,3 +5,6 @@ __pycache__/
 # Environment files with secrets
 .env
 .env.*
+
+# Scratch files
+junk_drawer/
