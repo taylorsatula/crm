@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction
+from core.event_bus import EventBus
+from core.events import NoteCreated
 from core.models import Note, NoteCreate
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
@@ -20,9 +22,10 @@ logger = logging.getLogger(__name__)
 class NoteService:
     """Service for note operations."""
 
-    def __init__(self, postgres: PostgresClient, audit: AuditLogger):
+    def __init__(self, postgres: PostgresClient, audit: AuditLogger, event_bus: EventBus):
         self.postgres = postgres
         self.audit = audit
+        self.event_bus = event_bus
 
     def create(self, data: NoteCreate) -> Note:
         """
@@ -63,6 +66,8 @@ class NoteService:
             action=AuditAction.CREATE,
             changes={"created": data.model_dump(mode="json", exclude_none=True)}
         )
+
+        self.event_bus.publish(NoteCreated.create(note=note))
 
         return note
 
@@ -194,6 +199,27 @@ class NoteService:
         )[0]
 
         return Note.model_validate(row)
+
+    def list_unprocessed_for_ticket(self, ticket_id: UUID) -> list[Note]:
+        """
+        List unprocessed notes for a specific ticket.
+
+        Args:
+            ticket_id: Ticket UUID
+
+        Returns:
+            List of unprocessed notes for the ticket, ordered by creation time ASC
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM notes
+            WHERE ticket_id = %s AND processed_at IS NULL AND deleted_at IS NULL
+            ORDER BY created_at ASC
+            """,
+            (ticket_id,)
+        )
+
+        return [Note.model_validate(row) for row in rows]
 
     def list_unprocessed(self, limit: int = 50) -> list[Note]:
         """

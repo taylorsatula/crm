@@ -15,13 +15,13 @@ def address_service(db):
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for creating test customers."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
     audit = AuditLogger(db)
-    return CustomerService(db, audit)
+    return CustomerService(db, audit, event_bus)
 
 
 @pytest.fixture

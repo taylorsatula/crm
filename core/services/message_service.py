@@ -249,6 +249,27 @@ class MessageService:
 
         return updated
 
+    def list_pending_for_ticket(self, ticket_id: UUID) -> list[ScheduledMessage]:
+        """
+        List pending messages for a ticket.
+
+        Args:
+            ticket_id: Ticket UUID
+
+        Returns:
+            List of pending messages for the ticket, ordered by scheduled_for ASC
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM scheduled_messages
+            WHERE ticket_id = %s AND status = %s
+            ORDER BY scheduled_for ASC
+            """,
+            (ticket_id, MessageStatus.PENDING.value)
+        )
+
+        return [ScheduledMessage.model_validate(row) for row in rows]
+
     def list_pending_due(self, limit: int = 100) -> list[ScheduledMessage]:
         """
         List pending messages that are due to be sent.

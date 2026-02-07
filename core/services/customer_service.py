@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.event_bus import EventBus
+from core.events import CustomerCreated
 from core.models import Customer, CustomerCreate, CustomerUpdate
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
@@ -28,9 +30,10 @@ _UPDATABLE_COLUMNS = {
 class CustomerService:
     """Service for customer operations."""
 
-    def __init__(self, postgres: PostgresClient, audit: AuditLogger):
+    def __init__(self, postgres: PostgresClient, audit: AuditLogger, event_bus: EventBus):
         self.postgres = postgres
         self.audit = audit
+        self.event_bus = event_bus
 
     def create(self, data: CustomerCreate) -> Customer:
         """
@@ -77,6 +80,8 @@ class CustomerService:
             action=AuditAction.CREATE,
             changes={"created": data.model_dump(mode="json", exclude_none=True)}
         )
+
+        self.event_bus.publish(CustomerCreated.create(customer=customer))
 
         return customer
 

@@ -5,13 +5,13 @@ from uuid import uuid4
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService with real DB."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
     audit = AuditLogger(db)
-    return CustomerService(db, audit)
+    return CustomerService(db, audit, event_bus)
 
 
 class TestCustomerCreate:
@@ -274,3 +274,24 @@ class TestCustomerSearch:
         results = customer_service.search("michelle")
 
         assert len(results) >= 1
+
+
+class TestCustomerEventPublishing:
+    """Verify that CustomerService publishes domain events to the bus."""
+
+    def test_create_publishes_customer_created(self, db, as_test_user, customer_service, event_bus):
+        from core.models import CustomerCreate
+        from core.events import CustomerCreated
+
+        received = []
+        event_bus.subscribe("CustomerCreated", received.append)
+
+        customer = customer_service.create(CustomerCreate(
+            first_name="Eventful",
+            last_name="Customer"
+        ))
+
+        assert len(received) == 1
+        assert isinstance(received[0], CustomerCreated)
+        assert received[0].customer.id == customer.id
+        assert received[0].customer.first_name == "Eventful"

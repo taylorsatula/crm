@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.event_bus import EventBus
+from core.events import InvoiceSent, InvoicePaid
 from core.models import Invoice, InvoiceStatus
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
@@ -21,9 +23,10 @@ logger = logging.getLogger(__name__)
 class InvoiceService:
     """Service for invoice operations."""
 
-    def __init__(self, postgres: PostgresClient, audit: AuditLogger):
+    def __init__(self, postgres: PostgresClient, audit: AuditLogger, event_bus: EventBus):
         self.postgres = postgres
         self.audit = audit
+        self.event_bus = event_bus
 
     def _generate_invoice_number(self, user_id: UUID) -> str:
         """
@@ -220,6 +223,8 @@ class InvoiceService:
             }
         )
 
+        self.event_bus.publish(InvoiceSent.create(invoice=updated))
+
         return updated
 
     def record_payment(self, invoice_id: UUID, amount_cents: int) -> Invoice:
@@ -276,6 +281,9 @@ class InvoiceService:
                 "payment_recorded": amount_cents
             }
         )
+
+        if new_status == InvoiceStatus.PAID:
+            self.event_bus.publish(InvoicePaid.create(invoice=updated))
 
         return updated
 

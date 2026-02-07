@@ -68,6 +68,13 @@ def authenticated_context(test_user_id):
 # =============================================================================
 
 
+@pytest.fixture
+def event_bus():
+    """Fresh EventBus for each test — no cross-test handler leakage."""
+    from core.event_bus import EventBus
+    return EventBus()
+
+
 @pytest.fixture(scope="session")
 def db():
     """Session-scoped PostgresClient (application user, RLS enforced)."""

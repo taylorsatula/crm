@@ -18,21 +18,21 @@ def attribute_service(db):
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for test setup."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
-    return CustomerService(db, AuditLogger(db))
+    return CustomerService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
-def note_service(db):
+def note_service(db, event_bus):
     """NoteService for test setup."""
     from core.services.note_service import NoteService
     from core.audit import AuditLogger
 
-    return NoteService(db, AuditLogger(db))
+    return NoteService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture

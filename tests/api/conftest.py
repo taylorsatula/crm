@@ -36,13 +36,13 @@ def audit(db):
 
 
 @pytest.fixture
-def customer_service(db, audit):
-    return CustomerService(db, audit)
+def customer_service(db, audit, event_bus):
+    return CustomerService(db, audit, event_bus)
 
 
 @pytest.fixture
-def ticket_service(db, audit):
-    return TicketService(db, audit)
+def ticket_service(db, audit, event_bus):
+    return TicketService(db, audit, event_bus)
 
 
 @pytest.fixture
@@ -56,13 +56,13 @@ def line_item_service(db, audit):
 
 
 @pytest.fixture
-def invoice_service(db, audit):
-    return InvoiceService(db, audit)
+def invoice_service(db, audit, event_bus):
+    return InvoiceService(db, audit, event_bus)
 
 
 @pytest.fixture
-def note_service(db, audit):
-    return NoteService(db, audit)
+def note_service(db, audit, event_bus):
+    return NoteService(db, audit, event_bus)
 
 
 @pytest.fixture

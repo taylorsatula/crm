@@ -26,61 +26,57 @@ Before starting Phase 5, ensure:
 
 ```python
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 # Infrastructure clients
-from clients.vault_client import VaultClient
+from clients.vault_client import get_database_url, get_valkey_url, get_email_config, get_llm_config
 from clients.postgres_client import PostgresClient
 from clients.valkey_client import ValkeyClient
+from clients.email_client import EmailGatewayClient
 from clients.llm_client import LLMClient
 
 # Auth components
-from auth.config import AuthConfig, load_auth_config
+from auth.config import AuthConfig
 from auth.database import AuthDatabase
 from auth.session import SessionManager
 from auth.rate_limiter import RateLimiter
 from auth.security_logger import SecurityLogger
-from auth.email_service import AuthEmailService
 from auth.service import AuthService
 from auth.security_middleware import AuthMiddleware
-from auth.api import router as auth_router
+from auth.api import create_auth_router
 
 # Core components
 from core.audit import AuditLogger
 from core.event_bus import EventBus
 from core.extraction import AttributeExtractor
-from core.handlers.scheduled_message_handler import ScheduledMessageHandler
-from core.handlers.attribute_persistence_handler import AttributePersistenceHandler
-from core.services.contact_service import ContactService
+from core.services.customer_service import CustomerService
 from core.services.address_service import AddressService
 from core.services.catalog_service import CatalogService
 from core.services.ticket_service import TicketService
+from core.services.line_item_service import LineItemService
 from core.services.invoice_service import InvoiceService
 from core.services.note_service import NoteService
 from core.services.attribute_service import AttributeService
 from core.services.message_service import MessageService
 
+# Event handlers
+from core.handlers.ticket_completion_handler import handle_ticket_completed
+from core.handlers.ticket_cancellation_handler import handle_ticket_cancelled
+from core.handlers.invoice_payment_handler import handle_invoice_paid
+
 # API components
 from api.middleware import RequestIDMiddleware
-from api.errors import http_exception_handler, validation_exception_handler, general_exception_handler
-from api.health import create_health_router
-from api.data import create_data_router, create_ticket_data_routes
-from api.actions import (
-    create_actions_router,
-    ContactActionHandler,
-    TicketActionHandler
-)
+from api.errors import register_error_handlers
+from api.data import create_data_router
+from api.actions import create_actions_router
 
 
 # Global references for dependency injection
 # These are set during lifespan and used by route dependencies
-vault: VaultClient = None
 postgres: PostgresClient = None
 valkey: ValkeyClient = None
-event_bus: EventBus = None
 auth_config: AuthConfig = None
 auth_service: AuthService = None
 
@@ -92,43 +88,30 @@ async def lifespan(app: FastAPI):
 
     Handles startup (initializing clients) and shutdown (cleanup).
     """
-    global vault, postgres, valkey, event_bus, auth_config, auth_service
+    global postgres, valkey, auth_config, auth_service
 
     # ===== STARTUP =====
 
     # 1. Initialize infrastructure clients
-    print("Initializing Vault client...")
-    vault = VaultClient()
-
     print("Initializing PostgreSQL client...")
-    postgres = PostgresClient(vault.get_database_url())
+    postgres = PostgresClient(get_database_url())
 
     print("Initializing Valkey client...")
-    valkey = ValkeyClient(vault.get_valkey_url())
+    valkey = ValkeyClient(get_valkey_url())
 
     print("Initializing LLM client...")
-    llm_config = vault.get_secret("crm/llm")
-    llm = LLMClient(
-        api_key=llm_config["api_key"],
-        model=llm_config.get("model")  # Optional, defaults to claude-haiku-4-5
-    )
+    llm_config = get_llm_config()
+    llm = LLMClient(api_key=llm_config["api_key"])
 
-    # 2. Initialize event bus (before services that publish events)
-    print("Initializing event bus...")
-    event_bus = EventBus()
-
-    # 3. Initialize auth components
+    # 2. Initialize auth components
     print("Initializing auth system...")
-    auth_config = load_auth_config()
+    auth_config = AuthConfig()
 
-    email_creds = vault.get_secret("crm/email")
-    auth_email = AuthEmailService(
-        config=auth_config,
-        smtp_host=email_creds["smtp_host"],
-        smtp_port=int(email_creds["smtp_port"]),
-        smtp_user=email_creds["smtp_user"],
-        smtp_password=email_creds["smtp_password"],
-        from_address=email_creds["from_address"]
+    email_creds = get_email_config()
+    email_client = EmailGatewayClient(
+        gateway_url=email_creds["gateway_url"],
+        api_key=email_creds["api_key"],
+        hmac_secret=email_creds["hmac_secret"],
     )
 
     auth_db = AuthDatabase(postgres)
@@ -137,72 +120,67 @@ async def lifespan(app: FastAPI):
     security_logger = SecurityLogger(postgres)
 
     auth_service = AuthService(
-        database=auth_db,
+        config=auth_config,
+        auth_db=auth_db,
         session_manager=session_manager,
         rate_limiter=rate_limiter,
-        email_service=auth_email,
+        email_client=email_client,
         security_logger=security_logger,
-        config=auth_config
     )
 
-    # 4. Initialize core services
+    # 3. Initialize core services
     print("Initializing core services...")
     audit = AuditLogger(postgres)
+    event_bus = EventBus()
     extractor = AttributeExtractor(llm)
 
-    contact_service = ContactService(postgres, audit)
+    customer_service = CustomerService(postgres, audit, event_bus)
     address_service = AddressService(postgres, audit)
     catalog_service = CatalogService(postgres, audit)
-    ticket_service = TicketService(postgres, audit, extractor, event_bus)
-    invoice_service = InvoiceService(postgres, audit)
-    note_service = NoteService(postgres, audit)
+    ticket_service = TicketService(postgres, audit, event_bus)
+    line_item_service = LineItemService(postgres, audit)
+    invoice_service = InvoiceService(postgres, audit, event_bus)
+    note_service = NoteService(postgres, audit, event_bus)
     attribute_service = AttributeService(postgres, audit)
     message_service = MessageService(postgres, audit)
 
-    # 5. Wire up event handlers (self-register with event_bus)
-    print("Wiring event handlers...")
-    ScheduledMessageHandler(event_bus, message_service, postgres)
-    AttributePersistenceHandler(event_bus, attribute_service, postgres)
+    # 3b. Wire event handlers
+    event_bus.subscribe("TicketCompleted", handle_ticket_completed(extractor, attribute_service, note_service))
+    event_bus.subscribe("TicketCancelled", handle_ticket_cancelled(message_service))
+    event_bus.subscribe("InvoicePaid", handle_invoice_paid(message_service))
 
-    # 6. Create routers with dependencies
+    # 4. Create routers with dependencies
     print("Creating API routers...")
 
-    # Health router
-    health_router = create_health_router(postgres, valkey, vault)
-    app.include_router(health_router)
-
-    # Data router
-    data_services = {
-        "contacts": contact_service,
-        "addresses": address_service,
-        "services": catalog_service,
-        "tickets": ticket_service,
-        "invoices": invoice_service,
-        "notes": note_service,
-        "attributes": attribute_service,
-        "messages": message_service,
+    services = {
+        "customer": customer_service,
+        "address": address_service,
+        "catalog": catalog_service,
+        "ticket": ticket_service,
+        "line_item": line_item_service,
+        "invoice": invoice_service,
+        "note": note_service,
+        "attribute": attribute_service,
+        "message": message_service,
     }
-    data_router = create_data_router(data_services)
+
+    data_router = create_data_router(services)
     app.include_router(data_router)
 
-    # Ticket-specific data routes
-    ticket_data_router = create_ticket_data_routes(ticket_service)
-    app.include_router(ticket_data_router)
-
-    # Actions router
-    action_handlers = {
-        "contact": ContactActionHandler(contact_service, address_service),
-        "ticket": TicketActionHandler(ticket_service, None),
-        # Add more handlers as implemented
-    }
-    actions_router = create_actions_router(action_handlers)
+    actions_router = create_actions_router(services)
     app.include_router(actions_router)
 
-    # Store services in app state for access elsewhere
-    app.state.services = data_services
+    # Auth router
+    auth_router = create_auth_router(auth_service)
+    app.include_router(auth_router)
+
+    # Auth middleware (needs session_manager, so wired here)
+    app.add_middleware(AuthMiddleware, session_manager=session_manager)
+
+    # Store references in app state
+    app.state.services = services
     app.state.auth_service = auth_service
     app.state.session_manager = session_manager
-    app.state.event_bus = event_bus
 
     print("Application startup complete!")
 
@@ -225,59 +203,13 @@ app = FastAPI(
 
 # Add middleware (order matters - first added is outermost)
 app.add_middleware(RequestIDMiddleware)
-# Auth middleware added after routers are created in lifespan
 
 # Exception handlers
-app.add_exception_handler(HTTPException, http_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(Exception, general_exception_handler)
-
-# Auth routes (public, before auth middleware check)
-app.include_router(auth_router)
+register_error_handlers(app)
 
 # Static files and templates (for frontend)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-
-# Add auth middleware after app creation
-@app.middleware("http")
-async def auth_middleware(request, call_next):
-    """
-    Authentication middleware.
-
-    Checks session cookie for protected routes.
-    """
-    from auth.security_middleware import AuthMiddleware
-
-    # Skip for public paths
-    public_paths = ["/auth/", "/health", "/static/", "/docs", "/openapi.json"]
-    if any(request.url.path.startswith(p) for p in public_paths):
-        return await call_next(request)
-
-    # Check session
-    from auth.exceptions import SessionExpiredError
-    from utils.user_context import set_current_user_id, clear_current_user_id
-
-    token = request.cookies.get("session_token")
-    if not token:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        session_manager = app.state.session_manager
-        session = session_manager.validate_session(token)
-        set_current_user_id(session.user_id)
-        request.state.user_id = session.user_id
-        request.state.session = session
-    except SessionExpiredError:
-        raise HTTPException(status_code=401, detail="Session expired")
-
-    try:
-        response = await call_next(request)
-        return response
-    finally:
-        clear_current_user_id()
 
 
 if __name__ == "__main__":
@@ -378,19 +310,25 @@ crm/
 ├── requirements.txt
 ├── api/
 │   ├── base.py                 # Response format, error codes
-│   ├── health.py, data.py, actions.py
+│   ├── data.py, actions.py
 │   ├── middleware.py, errors.py
 ├── auth/                       # Magic link auth system
 │   ├── types.py, exceptions.py, config.py
 │   ├── database.py, rate_limiter.py, security_logger.py
-│   ├── session.py, email_service.py, service.py
+│   ├── session.py, service.py
 │   └── security_middleware.py, api.py
 ├── clients/                    # External service clients
 │   ├── vault_client.py         # Secrets management
 │   ├── postgres_client.py      # PostgreSQL with RLS
-│   ├── valkey_client.py, llm_client.py
+│   ├── valkey_client.py, llm_client.py, email_client.py
 ├── core/
 │   ├── audit.py, extraction.py
+│   ├── event_bus.py            # Sync in-process event bus
+│   ├── events.py               # Frozen dataclass domain events
+│   ├── handlers/               # Event handler factories
+│   │   ├── ticket_completion_handler.py
+│   │   ├── ticket_cancellation_handler.py
+│   │   └── invoice_payment_handler.py
 │   ├── models/                 # Pydantic models per entity
 │   └── services/               # Business logic per entity
 ├── utils/

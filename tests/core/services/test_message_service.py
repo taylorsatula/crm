@@ -19,21 +19,21 @@ def message_service(db):
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for test setup."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
-    return CustomerService(db, AuditLogger(db))
+    return CustomerService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
-def ticket_service(db):
+def ticket_service(db, event_bus):
     """TicketService for test setup."""
     from core.services.ticket_service import TicketService
     from core.audit import AuditLogger
 
-    return TicketService(db, AuditLogger(db))
+    return TicketService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
@@ -512,6 +512,110 @@ class TestProcessPendingMessages:
         customer_service.delete(good_customer.id)
         customer_service.delete(no_email_customer.id)
         customer_service.delete(fail_customer.id)
+
+
+class TestListPendingForTicket:
+    """Tests for MessageService.list_pending_for_ticket."""
+
+    def test_returns_pending_messages_for_ticket(self, db, as_test_user, message_service, test_customer, test_ticket):
+        """Returns only pending messages linked to the specified ticket."""
+        from core.models import ScheduledMessageCreate, MessageType, MessageStatus
+
+        msg = message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=test_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            body="Reminder for your appointment",
+            scheduled_for=now_utc() + timedelta(days=1)
+        ))
+
+        pending = message_service.list_pending_for_ticket(test_ticket.id)
+
+        assert len(pending) == 1
+        assert pending[0].id == msg.id
+        assert pending[0].ticket_id == test_ticket.id
+        assert pending[0].status == MessageStatus.PENDING
+
+    def test_excludes_non_pending_messages(self, db, as_test_user, message_service, test_customer, test_ticket):
+        """Sent, cancelled, and failed messages are excluded."""
+        from core.models import ScheduledMessageCreate, MessageType
+
+        sent_msg = message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=test_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            body="Sent",
+            scheduled_for=now_utc() - timedelta(minutes=5)
+        ))
+        message_service.mark_sent(sent_msg.id)
+
+        cancelled_msg = message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=test_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            body="Cancelled",
+            scheduled_for=now_utc() + timedelta(days=1)
+        ))
+        message_service.cancel(cancelled_msg.id)
+
+        pending = message_service.list_pending_for_ticket(test_ticket.id)
+
+        pending_ids = {m.id for m in pending}
+        assert sent_msg.id not in pending_ids
+        assert cancelled_msg.id not in pending_ids
+
+    def test_excludes_messages_for_other_tickets(self, db, as_test_user, message_service, test_customer, test_ticket, ticket_service, test_address):
+        """Messages linked to a different ticket are not returned."""
+        from core.models import ScheduledMessageCreate, MessageType, TicketCreate
+
+        other_ticket = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=now_utc() + timedelta(days=14)
+        ))
+
+        message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=other_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            body="Other ticket reminder",
+            scheduled_for=now_utc() + timedelta(days=1)
+        ))
+
+        pending = message_service.list_pending_for_ticket(test_ticket.id)
+
+        assert pending == []
+
+    def test_returns_empty_for_ticket_with_no_messages(self, db, as_test_user, message_service, test_ticket):
+        """Returns empty list when ticket has no pending messages."""
+        pending = message_service.list_pending_for_ticket(test_ticket.id)
+        assert pending == []
+
+    def test_ordered_by_scheduled_for_ascending(self, db, as_test_user, message_service, test_customer, test_ticket):
+        """Pending messages are ordered by scheduled_for ASC (earliest first)."""
+        from core.models import ScheduledMessageCreate, MessageType
+
+        later = message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=test_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            body="Later reminder",
+            scheduled_for=now_utc() + timedelta(days=2)
+        ))
+
+        earlier = message_service.schedule(ScheduledMessageCreate(
+            customer_id=test_customer.id,
+            ticket_id=test_ticket.id,
+            message_type=MessageType.APPOINTMENT_CONFIRMATION,
+            body="Earlier reminder",
+            scheduled_for=now_utc() + timedelta(days=1)
+        ))
+
+        pending = message_service.list_pending_for_ticket(test_ticket.id)
+
+        assert len(pending) == 2
+        assert pending[0].id == earlier.id
+        assert pending[1].id == later.id
 
 
 class TestMessageList:

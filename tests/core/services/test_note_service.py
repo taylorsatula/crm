@@ -8,31 +8,31 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def note_service(db):
+def note_service(db, event_bus):
     """NoteService with real DB."""
     from core.services.note_service import NoteService
     from core.audit import AuditLogger
 
     audit = AuditLogger(db)
-    return NoteService(db, audit)
+    return NoteService(db, audit, event_bus)
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for test setup."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
-    return CustomerService(db, AuditLogger(db))
+    return CustomerService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
-def ticket_service(db):
+def ticket_service(db, event_bus):
     """TicketService for test setup."""
     from core.services.ticket_service import TicketService
     from core.audit import AuditLogger
 
-    return TicketService(db, AuditLogger(db))
+    return TicketService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
@@ -285,3 +285,68 @@ class TestNoteProcessed:
 
         assert note1.id in unprocessed_ids
         assert note2.id not in unprocessed_ids
+
+    def test_list_unprocessed_for_ticket(self, db, as_test_user, note_service, test_customer, test_ticket):
+        """Returns only unprocessed notes for a specific ticket."""
+        from core.models import NoteCreate
+
+        unprocessed_note = note_service.create(NoteCreate(
+            ticket_id=test_ticket.id,
+            content="Not yet processed"
+        ))
+        processed_note = note_service.create(NoteCreate(
+            ticket_id=test_ticket.id,
+            content="Already processed"
+        ))
+        note_service.mark_processed(processed_note.id)
+
+        customer_note = note_service.create(NoteCreate(
+            customer_id=test_customer.id,
+            content="Customer note, no ticket"
+        ))
+
+        result = note_service.list_unprocessed_for_ticket(test_ticket.id)
+        result_ids = [n.id for n in result]
+
+        assert unprocessed_note.id in result_ids
+        assert processed_note.id not in result_ids
+        assert customer_note.id not in result_ids
+
+    def test_list_unprocessed_for_ticket_empty(self, db, as_test_user, note_service, test_ticket):
+        """Returns empty list when ticket has no unprocessed notes."""
+        result = note_service.list_unprocessed_for_ticket(test_ticket.id)
+        assert result == []
+
+    def test_list_unprocessed_for_ticket_excludes_deleted(self, db, as_test_user, note_service, test_ticket):
+        """Deleted notes are excluded even if unprocessed."""
+        from core.models import NoteCreate
+
+        note = note_service.create(NoteCreate(
+            ticket_id=test_ticket.id,
+            content="Will be deleted"
+        ))
+        note_service.delete(note.id)
+
+        result = note_service.list_unprocessed_for_ticket(test_ticket.id)
+        assert result == []
+
+
+class TestNoteEventPublishing:
+    """Verify that NoteService publishes domain events to the bus."""
+
+    def test_create_publishes_note_created(self, db, as_test_user, note_service, event_bus, test_customer):
+        from core.models import NoteCreate
+        from core.events import NoteCreated
+
+        received = []
+        event_bus.subscribe("NoteCreated", received.append)
+
+        note = note_service.create(NoteCreate(
+            customer_id=test_customer.id,
+            content="Elderly woman, dog named Biscuit"
+        ))
+
+        assert len(received) == 1
+        assert isinstance(received[0], NoteCreated)
+        assert received[0].note.id == note.id
+        assert received[0].note.content == "Elderly woman, dog named Biscuit"

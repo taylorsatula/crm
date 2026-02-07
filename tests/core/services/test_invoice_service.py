@@ -8,22 +8,22 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def invoice_service(db):
+def invoice_service(db, event_bus):
     """InvoiceService with real DB."""
     from core.services.invoice_service import InvoiceService
     from core.audit import AuditLogger
 
     audit = AuditLogger(db)
-    return InvoiceService(db, audit)
+    return InvoiceService(db, audit, event_bus)
 
 
 @pytest.fixture
-def ticket_service(db):
+def ticket_service(db, event_bus):
     """TicketService for test setup."""
     from core.services.ticket_service import TicketService
     from core.audit import AuditLogger
 
-    return TicketService(db, AuditLogger(db))
+    return TicketService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
@@ -36,12 +36,12 @@ def line_item_service(db):
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for test setup."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
-    return CustomerService(db, AuditLogger(db))
+    return CustomerService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
@@ -309,3 +309,53 @@ class TestInvoiceList:
 
         assert len(invoices) >= 1
         assert all(inv.customer_id == test_customer.id for inv in invoices)
+
+
+class TestInvoiceEventPublishing:
+    """Verify that InvoiceService publishes domain events to the bus."""
+
+    def test_send_publishes_invoice_sent(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+        from core.models import InvoiceStatus
+        from core.events import InvoiceSent
+
+        invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
+
+        received = []
+        event_bus.subscribe("InvoiceSent", received.append)
+
+        invoice_service.send(invoice.id)
+
+        assert len(received) == 1
+        assert isinstance(received[0], InvoiceSent)
+        assert received[0].invoice.id == invoice.id
+        assert received[0].invoice.status == InvoiceStatus.SENT
+
+    def test_full_payment_publishes_invoice_paid(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+        from core.models import InvoiceStatus
+        from core.events import InvoicePaid
+
+        invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
+        invoice_service.send(invoice.id)
+
+        received = []
+        event_bus.subscribe("InvoicePaid", received.append)
+
+        invoice_service.record_payment(invoice.id, invoice.total_amount_cents)
+
+        assert len(received) == 1
+        assert isinstance(received[0], InvoicePaid)
+        assert received[0].invoice.id == invoice.id
+        assert received[0].invoice.status == InvoiceStatus.PAID
+
+    def test_partial_payment_does_not_publish_invoice_paid(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+        from core.events import InvoicePaid
+
+        invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
+        invoice_service.send(invoice.id)
+
+        received = []
+        event_bus.subscribe("InvoicePaid", received.append)
+
+        invoice_service.record_payment(invoice.id, 1)  # $0.01
+
+        assert received == [], "InvoicePaid must not fire for partial payments"

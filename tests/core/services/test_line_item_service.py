@@ -18,21 +18,21 @@ def line_item_service(db):
 
 
 @pytest.fixture
-def ticket_service(db):
+def ticket_service(db, event_bus):
     """TicketService for test setup."""
     from core.services.ticket_service import TicketService
     from core.audit import AuditLogger
 
-    return TicketService(db, AuditLogger(db))
+    return TicketService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture
-def customer_service(db):
+def customer_service(db, event_bus):
     """CustomerService for test setup."""
     from core.services.customer_service import CustomerService
     from core.audit import AuditLogger
 
-    return CustomerService(db, AuditLogger(db))
+    return CustomerService(db, AuditLogger(db), event_bus)
 
 
 @pytest.fixture

@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.event_bus import EventBus
+from core.events import TicketCreated, TicketClockIn, TicketCompleted, TicketCancelled
 from core.models import Ticket, TicketCreate, TicketUpdate, TicketStatus, ConfirmationStatus
 from utils.user_context import get_current_user_id
 from utils.timezone import now_utc
@@ -26,9 +28,10 @@ _UPDATABLE_COLUMNS = {
 class TicketService:
     """Service for ticket operations."""
 
-    def __init__(self, postgres: PostgresClient, audit: AuditLogger):
+    def __init__(self, postgres: PostgresClient, audit: AuditLogger, event_bus: EventBus):
         self.postgres = postgres
         self.audit = audit
+        self.event_bus = event_bus
 
     def create(self, data: TicketCreate) -> Ticket:
         """
@@ -75,6 +78,8 @@ class TicketService:
             action=AuditAction.CREATE,
             changes={"created": data.model_dump(mode="json", exclude_none=True)}
         )
+
+        self.event_bus.publish(TicketCreated.create(ticket=ticket))
 
         return ticket
 
@@ -220,6 +225,8 @@ class TicketService:
             }
         )
 
+        self.event_bus.publish(TicketClockIn.create(ticket=updated))
+
         return updated
 
     def clock_out(self, ticket_id: UUID) -> Ticket:
@@ -315,6 +322,8 @@ class TicketService:
             }
         )
 
+        self.event_bus.publish(TicketCompleted.create(ticket=updated))
+
         return updated
 
     def cancel(self, ticket_id: UUID) -> Ticket:
@@ -362,6 +371,8 @@ class TicketService:
                 "closed_at": {"old": None, "new": now.isoformat()}
             }
         )
+
+        self.event_bus.publish(TicketCancelled.create(ticket=updated))
 
         return updated
 
