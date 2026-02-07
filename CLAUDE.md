@@ -161,6 +161,11 @@ When modifying files, edit as if new code was always intended - never reference 
 - **Format**: `black .`
 - **Database**: `psql -U postgres -h localhost -d crm`
 
+### Test Execution Strategy
+- **During Development**: Run only the specific tests you're working on (`pytest tests/path/to/test_file.py::test_name`)
+- **Before Commit**: Run the full test suite (`pytest tests/`) to catch regressions
+- **Rationale**: Full suite takes time and costs tokens on LLM integration tests. Run targeted tests during iteration, full suite only for final verification.
+
 ### Git Workflow
 - **MANDATORY**: Invoke the `git-workflow` skill BEFORE every commit
 - **Skill command**: `Skill(skill: "git-workflow")`
@@ -169,6 +174,24 @@ When modifying files, edit as if new code was always intended - never reference 
 
 ### Pydantic BaseModel Standards
 Use Pydantic BaseModel for structured data (configs, API requests/responses, DTOs). Always `from pydantic import BaseModel, Field`. Use `Field()` with descriptions and defaults. Complete type annotations required. Naming: `*Config` for configs, `*Request/*Response` for API models.
+
+**JSON Serialization**: When serializing Pydantic models to JSON (for audit logs, API responses, storage), always use `model_dump(mode="json")`. This converts UUIDs and datetimes to strings. Without `mode="json"`, you'll get `TypeError: Object of type UUID is not JSON serializable`.
+
+```python
+# CORRECT - JSON-safe serialization
+data.model_dump(mode="json", exclude_none=True)
+
+# WRONG - Will fail on UUID/datetime fields
+data.model_dump()
+```
+
+### RLS Design Principle
+**RLS is for security (user isolation), not business logic (soft deletes).**
+
+- **Correct**: `USING (user_id = current_setting('app.current_user_id')::uuid)`
+- **Wrong**: `USING (user_id = X AND deleted_at IS NULL)` - Mixing security with business logic causes edge cases
+
+Handle soft-delete filtering in the application layer with `WHERE deleted_at IS NULL`.
 
 ---
 
