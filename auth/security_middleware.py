@@ -46,6 +46,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request through middleware."""
         path = request.url.path
+        request_id = getattr(request.state, "request_id", None)
 
         # Skip auth for public paths
         if self._is_public_path(path):
@@ -60,6 +61,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content=error_response(
                     ErrorCodes.NOT_AUTHENTICATED,
                     "Authentication required",
+                    request_id=request_id,
                 ).model_dump(mode="json"),
             )
 
@@ -72,6 +74,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content=error_response(
                     ErrorCodes.SESSION_EXPIRED,
                     "Session has expired",
+                    request_id=request_id,
                 ).model_dump(mode="json"),
             )
 

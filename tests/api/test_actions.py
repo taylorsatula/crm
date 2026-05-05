@@ -65,7 +65,10 @@ class TestActionsAuthentication:
         })
 
         assert response.status_code == 401
-        assert response.json()["error"]["code"] == "NOT_AUTHENTICATED"
+        body = response.json()
+        assert "X-Request-ID" in response.headers
+        assert body["error"]["code"] == "NOT_AUTHENTICATED"
+        assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
 
 class TestActionsValidation:
@@ -77,6 +80,7 @@ class TestActionsValidation:
         })
 
         assert response.status_code == 422
+        assert response.json()["meta"]["request_id"] == response.headers["X-Request-ID"]
 
     def test_missing_action_returns_422(self, client, as_test_user):
         response = client.post("/api/actions", json={

@@ -141,8 +141,8 @@ def app(mock_session_manager, services):
     from api.actions import create_actions_router
 
     app = FastAPI()
-    app.add_middleware(RequestIDMiddleware)
     app.add_middleware(AuthMiddleware, session_manager=mock_session_manager)
+    app.add_middleware(RequestIDMiddleware)
     register_error_handlers(app)
 
     app.include_router(create_data_router(services), prefix="/api")

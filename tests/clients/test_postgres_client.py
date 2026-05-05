@@ -20,6 +20,13 @@ class TestPostgresClientInit:
         assert result == 1
 
 
+class TestHealthCheck:
+    """Database health check."""
+
+    def test_health_check_returns_true_for_live_database(self, db):
+        assert db.health_check() is True
+
+
 class TestRLSContext:
     """Row Level Security context management."""
 

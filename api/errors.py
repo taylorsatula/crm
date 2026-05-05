@@ -14,17 +14,28 @@ logger = logging.getLogger(__name__)
 def register_error_handlers(app: FastAPI) -> None:
     """Register global exception handlers on the app."""
 
+    def _request_id(request: Request) -> str | None:
+        return getattr(request.state, "request_id", None)
+
     @app.exception_handler(ValueError)
     async def value_error_handler(request: Request, exc: ValueError):
         message = str(exc)
         if "not found" in message.lower():
             return JSONResponse(
                 status_code=404,
-                content=error_response(ErrorCodes.NOT_FOUND, message).model_dump(mode="json"),
+                content=error_response(
+                    ErrorCodes.NOT_FOUND,
+                    message,
+                    request_id=_request_id(request),
+                ).model_dump(mode="json"),
             )
         return JSONResponse(
             status_code=400,
-            content=error_response(ErrorCodes.INVALID_REQUEST, message).model_dump(mode="json"),
+            content=error_response(
+                ErrorCodes.INVALID_REQUEST,
+                message,
+                request_id=_request_id(request),
+            ).model_dump(mode="json"),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -34,6 +45,7 @@ def register_error_handlers(app: FastAPI) -> None:
             content=error_response(
                 ErrorCodes.VALIDATION_ERROR,
                 str(exc.errors()),
+                request_id=_request_id(request),
             ).model_dump(mode="json"),
         )
 
@@ -45,5 +57,6 @@ def register_error_handlers(app: FastAPI) -> None:
             content=error_response(
                 ErrorCodes.INTERNAL_ERROR,
                 "An internal error occurred",
+                request_id=_request_id(request),
             ).model_dump(mode="json"),
         )

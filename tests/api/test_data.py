@@ -77,15 +77,19 @@ class TestDataAuthentication:
         response = unauthed_client.get("/api/data", params={"type": "customers"})
 
         assert response.status_code == 401
+        assert "X-Request-ID" in response.headers
         body = response.json()
         assert body["success"] is False
         assert body["error"]["code"] == "NOT_AUTHENTICATED"
+        assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
     def test_authenticated_succeeds(self, client, as_test_user):
         response = client.get("/api/data", params={"type": "customers"})
 
         assert response.status_code == 200
-        assert response.json()["success"] is True
+        body = response.json()
+        assert body["success"] is True
+        assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
 
 # =============================================================================
@@ -103,6 +107,7 @@ class TestDataValidation:
         assert body["success"] is False
         assert body["error"]["code"] == "INVALID_REQUEST"
         assert "type" in body["error"]["message"].lower()
+        assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
     def test_unknown_type_returns_400(self, client, as_test_user):
         response = client.get("/api/data", params={"type": "unicorns"})

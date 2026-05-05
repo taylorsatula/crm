@@ -49,6 +49,10 @@ class ValkeyClient:
         self._client.ping()
         return True
 
+    def health_check(self) -> bool:
+        """Return True when Valkey responds to PING."""
+        return self.ping()
+
     def get(self, key: str) -> str | None:
         """
         Get value by key.

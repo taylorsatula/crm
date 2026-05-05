@@ -139,3 +139,6 @@ class TestHealthCheck:
     def test_ping_returns_true(self, valkey):
         """Ping returns True when healthy."""
         assert valkey.ping() is True
+
+    def test_health_check_returns_true_for_live_valkey(self, valkey):
+        assert valkey.health_check() is True

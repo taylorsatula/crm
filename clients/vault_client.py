@@ -123,6 +123,24 @@ class VaultClient:
             logger.error(f"Access denied to secret {full_path}: {e}")
             raise PermissionError(f"Access denied to secret '{full_path}': {e}")
 
+    def health_check(self) -> bool:
+        """Return True when Vault is initialized and unsealed."""
+        try:
+            status = self.client.sys.read_health_status(
+                method="GET",
+                standby_ok=True,
+            )
+        except Exception as e:
+            logger.error(f"Vault health check failed: {e}")
+            raise VaultError(f"Vault health check failed: {e}")
+
+        if not status.get("initialized", False):
+            raise VaultError("Vault is not initialized")
+        if status.get("sealed", True):
+            raise VaultError("Vault is sealed")
+
+        return True
+
 
 # Convenience functions
 
@@ -157,11 +175,11 @@ def get_email_config() -> Dict[str, str]:
     """Get email gateway configuration from Vault.
 
     Returns:
-        Dict with keys: gateway_url, api_key, hmac_secret
+        Dict with keys: gateway_url, api_key, hmac_secret, health_url
     """
     client = _ensure_vault_client()
 
-    fields = ["gateway_url", "api_key", "hmac_secret"]
+    fields = ["gateway_url", "api_key", "hmac_secret", "health_url"]
     result = {}
 
     for field in fields:
@@ -177,20 +195,25 @@ def get_email_config() -> Dict[str, str]:
 
 
 def get_llm_config() -> Dict[str, str]:
-    """Get Anthropic API key from Vault.
+    """Get Anthropic API key and health endpoint from Vault.
 
     Returns:
-        Dict with key: api_key
+        Dict with keys: api_key, health_url
     """
-    cache_key = "crm/llm/api_key"
-
-    if cache_key in _secret_cache:
-        return {"api_key": _secret_cache[cache_key]}
-
     client = _ensure_vault_client()
-    value = client.get_secret("llm", "api_key")
-    _secret_cache[cache_key] = value
-    return {"api_key": value}
+    fields = ["api_key", "health_url"]
+    result = {}
+
+    for field in fields:
+        cache_key = f"crm/llm/{field}"
+        if cache_key in _secret_cache:
+            result[field] = _secret_cache[cache_key]
+        else:
+            value = client.get_secret("llm", field)
+            _secret_cache[cache_key] = value
+            result[field] = value
+
+    return result
 
 
 def get_stripe_config() -> Dict[str, str]:

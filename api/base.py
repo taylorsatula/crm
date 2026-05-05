@@ -36,7 +36,7 @@ class APIResponse(BaseModel):
     meta: APIMeta
 
 
-def success_response(data: Any) -> APIResponse:
+def success_response(data: Any, request_id: str | None = None) -> APIResponse:
     """Create a success response."""
     return APIResponse(
         success=True,
@@ -44,20 +44,25 @@ def success_response(data: Any) -> APIResponse:
         error=None,
         meta=APIMeta(
             timestamp=now_utc(),
-            request_id=str(uuid4()),
+            request_id=request_id or str(uuid4()),
         ),
     )
 
 
-def error_response(code: str, message: str) -> APIResponse:
+def error_response(
+    code: str,
+    message: str,
+    request_id: str | None = None,
+    data: Any | None = None,
+) -> APIResponse:
     """Create an error response."""
     return APIResponse(
         success=False,
-        data=None,
+        data=data,
         error=APIError(code=code, message=message),
         meta=APIMeta(
             timestamp=now_utc(),
-            request_id=str(uuid4()),
+            request_id=request_id or str(uuid4()),
         ),
     )
 

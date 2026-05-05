@@ -23,6 +23,10 @@ class TestSuccessResponse:
         assert resp.meta.request_id is not None
         assert len(resp.meta.request_id) > 0
 
+    def test_request_id_can_be_provided(self):
+        resp = success_response({}, request_id="req-123")
+        assert resp.meta.request_id == "req-123"
+
     def test_timestamp_is_utc(self):
         resp = success_response({})
         assert resp.meta.timestamp.tzinfo == timezone.utc
@@ -42,6 +46,10 @@ class TestErrorResponse:
         resp = error_response("ERR", "msg")
         assert resp.meta.request_id is not None
         assert len(resp.meta.request_id) > 0
+
+    def test_request_id_can_be_provided(self):
+        resp = error_response("ERR", "msg", request_id="req-456")
+        assert resp.meta.request_id == "req-456"
 
     def test_timestamp_is_utc(self):
         resp = error_response("ERR", "msg")

@@ -1,6 +1,7 @@
 """Tests for Anthropic LLM client - uses real API calls."""
 
 import pytest
+import responses
 
 
 class TestLLMClient:
@@ -149,6 +150,51 @@ Example of correct output:
         assert len(result.thinking) > 0
         # The actual response should also exist
         assert len(result.content) > 0
+
+
+class TestLLMHealthCheck:
+    """Tests for lightweight authenticated LLM health checks."""
+
+    HEALTH_URL = "https://llm.example.com/health"
+    API_KEY = "test-anthropic-key"
+
+    @responses.activate
+    def test_health_check_gets_configured_health_url_with_auth_header(self):
+        from clients.llm_client import LLMClient
+
+        responses.add(responses.GET, self.HEALTH_URL, json={"status": "ok"}, status=200)
+        client = LLMClient(api_key=self.API_KEY, health_url=self.HEALTH_URL)
+
+        assert client.health_check() is True
+
+        assert len(responses.calls) == 1
+        request = responses.calls[0].request
+        assert request.url == self.HEALTH_URL
+        assert request.headers["x-api-key"] == self.API_KEY
+
+    @responses.activate
+    def test_health_check_raises_llm_error_on_non_2xx_response(self):
+        from clients.llm_client import LLMClient, LLMError
+
+        responses.add(responses.GET, self.HEALTH_URL, json={"status": "down"}, status=503)
+        client = LLMClient(api_key=self.API_KEY, health_url=self.HEALTH_URL)
+
+        with pytest.raises(LLMError, match="503"):
+            client.health_check()
+
+    @responses.activate
+    def test_health_check_raises_llm_error_on_request_failure(self):
+        from clients.llm_client import LLMClient, LLMError
+
+        responses.add(
+            responses.GET,
+            self.HEALTH_URL,
+            body=ConnectionError("connection refused"),
+        )
+        client = LLMClient(api_key=self.API_KEY, health_url=self.HEALTH_URL)
+
+        with pytest.raises(LLMError, match="connection refused"):
+            client.health_check()
 
 
 class TestLLMResponse:

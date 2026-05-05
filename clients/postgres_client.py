@@ -151,6 +151,10 @@ class PostgresClient:
                 conn.commit()
                 return results
 
+    def health_check(self) -> bool:
+        """Return True when PostgreSQL accepts a simple query."""
+        return self.execute_scalar("SELECT 1") == 1
+
     def close(self) -> None:
         """Close connection pool."""
         if self._database_url in self._connection_pools:

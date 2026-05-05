@@ -3,7 +3,32 @@
 import os
 import pytest
 
-from clients.vault_client import VaultClient, get_database_url, get_valkey_url
+from clients.vault_client import (
+    VaultClient,
+    VaultError,
+    get_database_url,
+    get_email_config,
+    get_llm_config,
+    get_valkey_url,
+)
+
+
+class FakeVaultSys:
+    def __init__(self, response=None, error=None):
+        self.response = response or {"initialized": True, "sealed": False}
+        self.error = error
+        self.calls = 0
+
+    def read_health_status(self, method="GET", standby_ok=True):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.response
+
+
+class FakeVaultHvacClient:
+    def __init__(self, sys):
+        self.sys = sys
 
 
 class TestVaultClientInit:
@@ -89,3 +114,43 @@ class TestConvenienceFunctions:
         """get_valkey_url returns Redis connection string."""
         url = get_valkey_url()
         assert url.startswith("redis://")
+
+    def test_get_email_config_requires_health_url(self):
+        """Email config includes all fields required for runtime and health checks."""
+        config = get_email_config()
+        assert set(config) == {"gateway_url", "api_key", "hmac_secret", "health_url"}
+        assert config["health_url"].startswith(("http://", "https://"))
+
+    def test_get_llm_config_requires_health_url(self):
+        """LLM config includes API and health endpoint credentials."""
+        config = get_llm_config()
+        assert set(config) == {"api_key", "health_url"}
+        assert config["health_url"].startswith(("http://", "https://"))
+
+
+class TestVaultHealthCheck:
+    """Vault runtime health check."""
+
+    def test_health_check_returns_true_when_vault_is_initialized_and_unsealed(self):
+        sys = FakeVaultSys({"initialized": True, "sealed": False})
+        client = VaultClient.__new__(VaultClient)
+        client.client = FakeVaultHvacClient(sys)
+
+        assert client.health_check() is True
+        assert sys.calls == 1
+
+    def test_health_check_raises_vault_error_when_vault_reports_sealed(self):
+        client = VaultClient.__new__(VaultClient)
+        client.client = FakeVaultHvacClient(
+            FakeVaultSys({"initialized": True, "sealed": True})
+        )
+
+        with pytest.raises(VaultError, match="sealed"):
+            client.health_check()
+
+    def test_health_check_raises_vault_error_on_hvac_failure(self):
+        client = VaultClient.__new__(VaultClient)
+        client.client = FakeVaultHvacClient(FakeVaultSys(error=RuntimeError("boom")))
+
+        with pytest.raises(VaultError, match="boom"):
+            client.health_check()

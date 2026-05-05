@@ -107,9 +107,15 @@ def db_url():
 
 
 @pytest.fixture(autouse=True)
-def reset_db_state(db_admin):
+def reset_db_state(request):
     """Reset database state before each test using admin connection."""
+    if "db" not in request.fixturenames and "db_admin" not in request.fixturenames:
+        yield
+        return
+
+    db_admin = request.getfixturevalue("db_admin")
     if db_admin is None:
+        yield
         return
 
     # Truncate user-scoped tables (CASCADE handles foreign keys)

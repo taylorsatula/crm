@@ -56,7 +56,10 @@ def create_actions_router(services: dict) -> APIRouter:
 
         method = getattr(handler, f"_handle_{body.action}", None)
         result = method(body.data)
-        return success_response(result).model_dump(mode="json")
+        return success_response(
+            result,
+            request_id=request.state.request_id,
+        ).model_dump(mode="json")
 
     return router
 

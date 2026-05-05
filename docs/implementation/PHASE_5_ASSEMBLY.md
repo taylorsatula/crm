@@ -22,6 +22,15 @@ Before starting Phase 5, ensure:
 
 **Purpose**: Application entry point and dependency wiring.
 
+### Current implementation notes
+
+- `main.py` exposes `create_app()` for tests and `app = create_app()` for Uvicorn.
+- External clients and domain services are assembled during FastAPI lifespan startup.
+- API routes are mounted at `/api/data` and `/api/actions`; auth routes are mounted under `/auth`.
+- Health routes are public at `/health`, `/health/ready`, and `/health/live`.
+- Static frontend assets are mounted at `/assets` from the repo `static/` directory.
+- `X-Request-ID` is propagated into response `meta.request_id`, including auth middleware 401 responses.
+
 ### Implementation
 
 ```python
@@ -101,7 +110,10 @@ async def lifespan(app: FastAPI):
 
     print("Initializing LLM client...")
     llm_config = get_llm_config()
-    llm = LLMClient(api_key=llm_config["api_key"])
+    llm = LLMClient(
+        api_key=llm_config["api_key"],
+        health_url=llm_config["health_url"],
+    )
 
     # 2. Initialize auth components
     print("Initializing auth system...")
@@ -112,6 +124,7 @@ async def lifespan(app: FastAPI):
         gateway_url=email_creds["gateway_url"],
         api_key=email_creds["api_key"],
         hmac_secret=email_creds["hmac_secret"],
+        health_url=email_creds["health_url"],
     )
 
     auth_db = AuthDatabase(postgres)
@@ -208,7 +221,7 @@ app.add_middleware(RequestIDMiddleware)
 register_error_handlers(app)
 
 # Static files and templates (for frontend)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/assets", StaticFiles(directory="static"), name="assets")
 templates = Jinja2Templates(directory="templates")
 
 

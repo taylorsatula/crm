@@ -20,6 +20,7 @@ from typing import Any, Generator, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
+import requests
 from pydantic import BaseModel
 
 from clients.vault_client import get_llm_config
@@ -125,21 +126,50 @@ class LLMClient:
 
     DEFAULT_MODEL = "claude-haiku-4-5"
 
-    def __init__(self, api_key: str | None = None, model: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        health_url: str | None = None,
+    ):
         """
         Initialize Anthropic client.
 
         Args:
             api_key: Anthropic API key. If None, fetched from Vault.
             model: Model name. If None, uses DEFAULT_MODEL.
+            health_url: Authenticated endpoint used for lightweight health checks.
         """
         if api_key is None:
             config = get_llm_config()
             api_key = config["api_key"]
+            health_url = health_url or config["health_url"]
 
+        if not health_url:
+            raise ValueError("health_url is required")
+
+        self.api_key = api_key
+        self.health_url = health_url
         self.model = model or self.DEFAULT_MODEL
         self._client = anthropic.Anthropic(api_key=api_key)
         logger.info(f"LLM client initialized with model: {self.model}")
+
+    def health_check(self) -> bool:
+        """Check LLM provider reachability without generating tokens."""
+        try:
+            response = requests.get(
+                self.health_url,
+                headers={"x-api-key": self.api_key},
+                timeout=3,
+            )
+        except (requests.exceptions.RequestException, ConnectionError) as e:
+            logger.error(f"LLM health check failed: {e}")
+            raise LLMError(f"LLM health check failed: {e}")
+
+        if not 200 <= response.status_code < 300:
+            raise LLMError(f"LLM health check failed with status {response.status_code}")
+
+        return True
 
     def generate(
         self,

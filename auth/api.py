@@ -34,6 +34,9 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
     """Create auth router with injected service."""
     router = APIRouter(tags=["auth"])
 
+    def _request_id(request: Request) -> str | None:
+        return getattr(request.state, "request_id", None)
+
     @router.post("/request-link")
     async def request_magic_link(request: Request, body: MagicLinkRequest):
         """Request magic link email.
@@ -58,10 +61,14 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 content=error_response(
                     ErrorCodes.RATE_LIMITED,
                     f"Too many requests. Please wait {e.retry_after_seconds} seconds.",
+                    request_id=_request_id(request),
                 ).model_dump(mode="json"),
             )
 
-        return success_response(asdict(result))
+        return success_response(
+            asdict(result),
+            request_id=_request_id(request),
+        ).model_dump(mode="json")
 
     @router.get("/verify")
     async def verify_magic_link(
@@ -79,6 +86,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 content=error_response(
                     ErrorCodes.INVALID_REQUEST,
                     "Token parameter is required",
+                    request_id=_request_id(request),
                 ).model_dump(mode="json"),
             )
 
@@ -97,6 +105,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 content=error_response(
                     ErrorCodes.INVALID_TOKEN,
                     "Invalid or expired token",
+                    request_id=_request_id(request),
                 ).model_dump(mode="json"),
             )
         except UserInactiveError:
@@ -105,6 +114,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 content=error_response(
                     ErrorCodes.NOT_AUTHENTICATED,
                     "Account is deactivated",
+                    request_id=_request_id(request),
                 ).model_dump(mode="json"),
             )
 
@@ -118,12 +128,15 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
             max_age=int((result.session.expires_at - result.session.created_at).total_seconds()),
         )
 
-        return success_response({
-            "user": {
-                "id": str(result.user.id),
-                "email": result.user.email,
-            }
-        })
+        return success_response(
+            {
+                "user": {
+                    "id": str(result.user.id),
+                    "email": result.user.email,
+                }
+            },
+            request_id=_request_id(request),
+        ).model_dump(mode="json")
 
     @router.post("/logout")
     async def logout(request: Request, response: Response):
@@ -140,7 +153,10 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
         # Clear cookie
         response.delete_cookie(key="session_token")
 
-        return success_response({"message": "Logged out successfully"})
+        return success_response(
+            {"message": "Logged out successfully"},
+            request_id=_request_id(request),
+        ).model_dump(mode="json")
 
     @router.get("/me")
     async def get_current_user(request: Request):
@@ -154,13 +170,17 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                 content=error_response(
                     ErrorCodes.NOT_AUTHENTICATED,
                     "Authentication required",
+                    request_id=_request_id(request),
                 ).model_dump(mode="json"),
             )
 
         user_id = request.state.user_id
 
-        return success_response({
-            "user_id": str(user_id),
-        })
+        return success_response(
+            {
+                "user_id": str(user_id),
+            },
+            request_id=_request_id(request),
+        ).model_dump(mode="json")
 
     return router
