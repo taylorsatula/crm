@@ -148,14 +148,7 @@ def build_app_container() -> AppContainer:
     }
     email_client = EmailGatewayClient(**email_config)
 
-    llm_config = {
-        "api_key": vault.get_secret("llm", "api_key"),
-        "health_url": vault.get_secret("llm", "health_url"),
-    }
-    llm = LLMClient(
-        api_key=llm_config["api_key"],
-        health_url=llm_config["health_url"],
-    )
+    llm = LLMClient(**vault.get_llm_config())
 
     auth_config = AuthConfig()
     auth_db = AuthDatabase(postgres)

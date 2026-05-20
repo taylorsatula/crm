@@ -1,8 +1,9 @@
 """Tests for AttributeExtractor."""
 
+import os
 import pytest
 from decimal import Decimal
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 
 class TestAttributeExtractor:
@@ -115,6 +116,7 @@ class TestAttributeExtractor:
         assert "extracts structured information" in messages[0]["content"].lower()
         assert messages[1]["role"] == "user"
         assert "Customer has 2 large dogs" in messages[1]["content"]
+        assert call_kwargs["response_format"] == {"type": "json_object"}
 
     def test_confidence_is_decimal(self):
         """Confidence is returned as Decimal."""
@@ -134,6 +136,10 @@ class TestAttributeExtractor:
         assert Decimal("0") <= result.confidence <= Decimal("1")
 
 
+@pytest.mark.skipif(
+    os.getenv("RUN_LIVE_LLM_TESTS") != "1" or not os.getenv("OPENAI_API_KEY"),
+    reason="live LLM extraction tests require RUN_LIVE_LLM_TESTS=1 and OPENAI_API_KEY",
+)
 class TestExtractionWithRealLLM:
     """Integration tests with real LLM API.
 
@@ -147,7 +153,11 @@ class TestExtractionWithRealLLM:
         from core.extraction import AttributeExtractor
         from clients.llm_client import LLMClient
 
-        llm = LLMClient()
+        llm = LLMClient(
+            api_key=os.environ["OPENAI_API_KEY"],
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
+        )
         return AttributeExtractor(llm)
 
     def test_extracts_pet_info(self, extractor):

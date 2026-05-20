@@ -12,7 +12,7 @@ dependencies = [
     "redis>=5.0",
     "hvac>=2.0",
     "requests>=2.32",
-    "anthropic>=0.40",
+    "openai>=1.109.1",
     "json-repair>=0.30",
     "python-dotenv>=1.0",
 ]

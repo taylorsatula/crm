@@ -67,8 +67,12 @@ Example of correct output:
         response = self.llm.generate(
             messages=[
                 {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Extract attributes from these notes:\n\n{notes}"}
-            ]
+                {
+                    "role": "user",
+                    "content": f"Extract attributes from these notes:\n\n{notes}",
+                },
+            ],
+            response_format={"type": "json_object"},
         )
 
         raw_content = response.content

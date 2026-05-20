@@ -141,8 +141,40 @@ class VaultClient:
 
         return True
 
+    def get_llm_config(self) -> Dict[str, str]:
+        """Get LLM API key and optional OpenAI-compatible base URL."""
+        return _get_llm_config(self)
+
 
 # Convenience functions
+
+
+def _get_llm_config(client: VaultClient) -> Dict[str, str]:
+    """Build LLM config from an existing Vault client."""
+    result = {}
+
+    api_key_cache_key = "crm/llm/api_key"
+    if api_key_cache_key in _secret_cache:
+        result["api_key"] = _secret_cache[api_key_cache_key]
+    else:
+        value = client.get_secret("llm", "api_key")
+        _secret_cache[api_key_cache_key] = value
+        result["api_key"] = value
+
+    base_url_cache_key = "crm/llm/base_url"
+    if base_url_cache_key in _secret_cache:
+        result["base_url"] = _secret_cache[base_url_cache_key]
+    else:
+        try:
+            value = client.get_secret("llm", "base_url")
+        except KeyError:
+            value = None
+
+        if value:
+            _secret_cache[base_url_cache_key] = value
+            result["base_url"] = value
+
+    return result
 
 
 def get_database_url() -> str:
@@ -195,25 +227,12 @@ def get_email_config() -> Dict[str, str]:
 
 
 def get_llm_config() -> Dict[str, str]:
-    """Get Anthropic API key and health endpoint from Vault.
+    """Get LLM API key and optional OpenAI-compatible base URL from Vault.
 
     Returns:
-        Dict with keys: api_key, health_url
+        Dict with keys: api_key and optionally base_url
     """
-    client = _ensure_vault_client()
-    fields = ["api_key", "health_url"]
-    result = {}
-
-    for field in fields:
-        cache_key = f"crm/llm/{field}"
-        if cache_key in _secret_cache:
-            result[field] = _secret_cache[cache_key]
-        else:
-            value = client.get_secret("llm", field)
-            _secret_cache[cache_key] = value
-            result[field] = value
-
-    return result
+    return _get_llm_config(_ensure_vault_client())
 
 
 def get_stripe_config() -> Dict[str, str]:

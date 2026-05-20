@@ -26,7 +26,8 @@ def test_pyproject_requires_python_312_or_newer():
 
 def test_pyproject_declares_runtime_dependencies():
     data = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    dependencies = {_dependency_name(dep) for dep in data["project"]["dependencies"]}
+    requirements = data["project"]["dependencies"]
+    dependencies = {_dependency_name(dep) for dep in requirements}
 
     assert {
         "fastapi",
@@ -37,10 +38,12 @@ def test_pyproject_declares_runtime_dependencies():
         "redis",
         "hvac",
         "requests",
-        "anthropic",
+        "openai",
         "json-repair",
         "python-dotenv",
     }.issubset(dependencies)
+    assert "anthropic" not in dependencies
+    assert any(req.startswith("openai>=1.109.1") for req in requirements)
 
 
 def test_pyproject_declares_test_dependencies():
