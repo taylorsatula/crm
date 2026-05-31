@@ -174,6 +174,19 @@ def _get_llm_config(client: VaultClient) -> Dict[str, str]:
             _secret_cache[base_url_cache_key] = value
             result["base_url"] = value
 
+    model_cache_key = "crm/llm/model"
+    if model_cache_key in _secret_cache:
+        result["model"] = _secret_cache[model_cache_key]
+    else:
+        try:
+            value = client.get_secret("llm", "model")
+        except KeyError:
+            value = None
+
+        if value:
+            _secret_cache[model_cache_key] = value
+            result["model"] = value
+
     return result
 
 

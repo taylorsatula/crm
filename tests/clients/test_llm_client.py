@@ -28,12 +28,15 @@ class FakeModels:
         self.list_calls = []
         self.retrieve_calls = []
         self.error = None
+        self.model_ids = ["gpt-test", "provider/model"]
 
     def list(self, **kwargs):
         self.list_calls.append(kwargs)
         if self.error:
             raise self.error
-        return SimpleNamespace(data=[SimpleNamespace(id="gpt-test")])
+        return SimpleNamespace(
+            data=[SimpleNamespace(id=model_id) for model_id in self.model_ids]
+        )
 
     def retrieve(self, model, **kwargs):
         self.retrieve_calls.append((model, kwargs))
@@ -306,7 +309,7 @@ class TestGenerate:
 
 
 class TestLLMHealthCheck:
-    def test_health_check_retrieves_configured_model_with_timeout(
+    def test_health_check_lists_models_and_requires_configured_model(
         self, fake_openai
     ):
         from clients.llm_client import LLMClient
@@ -315,9 +318,7 @@ class TestLLMHealthCheck:
         client = LLMClient(api_key="test-key", model="provider/model")
 
         assert client.health_check() is True
-        assert fake_client.models.retrieve_calls == [
-            ("provider/model", {"timeout": 10.0})
-        ]
+        assert fake_client.models.list_calls == [{"timeout": 10.0}]
 
     def test_health_check_maps_openai_errors(self, fake_openai):
         from clients.llm_client import LLMClient, LLMError
@@ -327,6 +328,16 @@ class TestLLMHealthCheck:
         client = LLMClient(api_key="test-key")
 
         with pytest.raises(LLMError, match="model lookup failed"):
+            client.health_check()
+
+    def test_health_check_raises_when_configured_model_is_absent(self, fake_openai):
+        from clients.llm_client import LLMClient, LLMError
+
+        fake_client, _ = fake_openai
+        fake_client.models.model_ids = ["different/model"]
+        client = LLMClient(api_key="test-key", model="provider/model")
+
+        with pytest.raises(LLMError, match="provider/model"):
             client.health_check()
 
 

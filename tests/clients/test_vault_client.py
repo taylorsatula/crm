@@ -32,6 +32,7 @@ DEFAULT_SECRETS = {
     "crm/llm": {
         "api_key": "llm-key",
         "base_url": "https://llm.example.com/v1",
+        "model": "provider/model",
     },
 }
 
@@ -243,20 +244,30 @@ class TestConvenienceFunctions:
         assert set(config) == {"gateway_url", "api_key", "hmac_secret", "health_url"}
         assert config["health_url"].startswith(("http://", "https://"))
 
-    def test_get_llm_config_returns_api_key_and_optional_base_url(self, fake_hvac):
-        """LLM config includes API key and compatible provider URL when present."""
+    def test_get_llm_config_returns_api_key_base_url_and_model(self, fake_hvac):
+        """LLM config includes provider credentials, URL, and model when present."""
         config = get_llm_config()
 
         assert config == {
             "api_key": "llm-key",
             "base_url": "https://llm.example.com/v1",
+            "model": "provider/model",
         }
 
     def test_get_llm_config_allows_missing_base_url(self, fake_hvac):
         """LLM base_url is optional for the default OpenAI endpoint."""
         del fake_hvac.secrets["crm/llm"]["base_url"]
 
-        assert get_llm_config() == {"api_key": "llm-key"}
+        assert get_llm_config() == {"api_key": "llm-key", "model": "provider/model"}
+
+    def test_get_llm_config_allows_missing_model(self, fake_hvac):
+        """LLM model is optional when the default client model is acceptable."""
+        del fake_hvac.secrets["crm/llm"]["model"]
+
+        assert get_llm_config() == {
+            "api_key": "llm-key",
+            "base_url": "https://llm.example.com/v1",
+        }
 
     def test_convenience_functions_cache_secret_values(self, fake_hvac):
         """Convenience functions cache values after the first Vault read."""

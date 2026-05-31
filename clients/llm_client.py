@@ -189,13 +189,17 @@ class LLMClient:
     def health_check(self) -> bool:
         """Check provider reachability and access to the configured model."""
         try:
-            self._client.models.retrieve(self.model, timeout=self.health_timeout)
+            models = self._client.models.list(timeout=self.health_timeout)
         except openai.OpenAIError as e:
             logger.error("LLM health check failed: %s", e)
             raise LLMError(f"LLM health check failed: {e}")
         except Exception as e:
             logger.error("LLM health check failed: %s", e)
             raise LLMError(f"LLM health check failed: {e}")
+
+        model_ids = {model.id for model in models.data}
+        if self.model not in model_ids:
+            raise LLMError(f"Configured LLM model is unavailable: {self.model}")
 
         return True
 
