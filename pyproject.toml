@@ -15,6 +15,11 @@ dependencies = [
     "openai>=1.109.1",
     "json-repair>=0.30",
     "python-dotenv>=1.0",
+    "google-cloud-storage==1.42.0",
+    "google-auth",
+    "google-auth-oauthlib==0.4.6",
+    "google-api-python-client==2.22.0",
+    "googlemaps==4.5.3",
 ]
 
 [project.optional-dependencies]

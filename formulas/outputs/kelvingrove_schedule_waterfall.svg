@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1180" viewBox="0 0 1600 1180">
+  <defs>
+    <style>
+      .bg { fill: #f7f4ed; }
+      .panel { fill: #fffdf8; stroke: #24231f; stroke-width: 2; }
+      .ink { fill: #24231f; font-family: Georgia, 'Times New Roman', serif; }
+      .mono { fill: #24231f; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .muted { fill: #6d675c; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .small { font-size: 22px; }
+      .tiny { font-size: 18px; }
+      .title { font-size: 54px; font-weight: 700; }
+      .subtitle { font-size: 23px; }
+      .h2 { font-size: 31px; font-weight: 700; }
+      .rank { font-size: 34px; font-weight: 700; }
+      .score { font-size: 40px; font-weight: 700; }
+      .barLabel { fill: #fffdf8; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 17px; font-weight: 700; }
+      .grid { stroke: #ddd5c7; stroke-width: 1; }
+      .cluster { fill: #188977; }
+      .route { fill: #2e63b6; }
+      .soon { fill: #d38b20; }
+      .gap { fill: #5e8f3a; }
+      .capacity { fill: #81786a; }
+      .buffer { fill: #b44d61; }
+      .badge { fill: #24231f; }
+      .badgeText { fill: #fffdf8; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 18px; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1180"/>
+
+  <text class="ink title" x="70" y="92">SmarterService Scheduling Score Waterfall</text>
+  <text class="ink subtitle" x="72" y="132">Ticket: 114 Kelvingrove Drive, Madison, AL 35758 | Duration: 3h5m | Weekdays only</text>
+  <text class="muted tiny" x="72" y="164">Excluded dates: 2026-05-13, 2026-05-14, 2026-05-15, 2026-05-18, 2026-06-03, 2026-06-04</text>
+
+  <rect class="panel" x="70" y="198" width="1460" height="140" rx="8"/>
+  <text class="ink h2" x="100" y="246">Formula</text>
+  <text class="mono small" x="100" y="288">Score = .35*Cluster + .20*Route + .20*Soonness + .15*Gap + .05*Capacity + .05*Buffer</text>
+  <text class="muted tiny" x="100" y="319">Blank-day drive uses base-to-job plus 50% of return drive, capped at 45 minutes. Existing days use incremental route burden.</text>
+  <text class="muted tiny" x="985" y="246">Clear winner check: NO</text>
+  <text class="muted tiny" x="985" y="276">Rank 1 gap: 6.32 points</text>
+  <text class="muted tiny" x="985" y="306">Score std dev: 8.97 points</text>
+
+  <rect class="panel" x="70" y="378" width="1460" height="560" rx="8"/>
+  <text class="ink h2" x="100" y="426">Weighted Contribution Waterfall</text>
+  <text class="muted tiny" x="100" y="458">Each colored segment is the weighted point contribution to the final score.</text>
+
+  <g transform="translate(100 494)">
+    <line class="grid" x1="280" y1="0" x2="280" y2="365"/>
+    <line class="grid" x1="480" y1="0" x2="480" y2="365"/>
+    <line class="grid" x1="680" y1="0" x2="680" y2="365"/>
+    <line class="grid" x1="880" y1="0" x2="880" y2="365"/>
+    <text class="muted tiny" x="274" y="386">20</text>
+    <text class="muted tiny" x="474" y="386">40</text>
+    <text class="muted tiny" x="674" y="386">60</text>
+    <text class="muted tiny" x="874" y="386">80</text>
+
+    <text class="ink rank" x="0" y="45">#1</text>
+    <text class="mono small" x="62" y="32">2026-06-18 Thu</text>
+    <text class="muted tiny" x="62" y="60">12:00-15:05 | existing day, 1 job | +21 min drive</text>
+    <rect class="cluster" x="280" y="10" width="187.2" height="42"/>
+    <rect class="route" x="467.2" y="10" width="131.6" height="42"/>
+    <rect class="soon" x="598.8" y="10" width="29.8" height="42"/>
+    <rect class="gap" x="628.6" y="10" width="80.3" height="42"/>
+    <rect class="capacity" x="708.9" y="10" width="37.5" height="42"/>
+    <rect class="buffer" x="746.4" y="10" width="50.0" height="42"/>
+    <text class="barLabel" x="291" y="37">18.72</text>
+    <text class="barLabel" x="481" y="37">13.16</text>
+    <text class="barLabel" x="642" y="37">8.03</text>
+    <text class="ink score" x="835" y="45">51.64</text>
+
+    <text class="ink rank" x="0" y="165">#2</text>
+    <text class="mono small" x="62" y="152">2026-05-25 Mon</text>
+    <text class="muted tiny" x="62" y="180">13:00-16:05 | existing day, 2 jobs | +21 min drive</text>
+    <rect class="cluster" x="280" y="130" width="180.9" height="42"/>
+    <rect class="route" x="460.9" y="130" width="129.1" height="42"/>
+    <rect class="soon" x="590.0" y="130" width="93.4" height="42"/>
+    <rect class="gap" x="683.4" y="130" width="10.6" height="42"/>
+    <rect class="capacity" x="694.0" y="130" width="25.0" height="42"/>
+    <rect class="buffer" x="719.0" y="130" width="14.2" height="42"/>
+    <text class="barLabel" x="291" y="157">18.09</text>
+    <text class="barLabel" x="473" y="157">12.91</text>
+    <text class="barLabel" x="603" y="157">9.34</text>
+    <text class="ink score" x="772" y="165">45.32</text>
+
+    <text class="ink rank" x="0" y="285">#3</text>
+    <text class="mono small" x="62" y="272">2026-06-10 Wed</text>
+    <text class="muted tiny" x="62" y="300">11:30-14:35 | unbooked day | capped +45 min drive</text>
+    <rect class="cluster" x="280" y="250" width="40.5" height="42"/>
+    <rect class="route" x="320.5" y="250" width="50.0" height="42"/>
+    <rect class="soon" x="370.5" y="250" width="43.6" height="42"/>
+    <rect class="gap" x="414.1" y="250" width="137.0" height="42"/>
+    <rect class="capacity" x="551.1" y="250" width="50.0" height="42"/>
+    <rect class="buffer" x="601.1" y="250" width="50.0" height="42"/>
+    <text class="barLabel" x="425" y="277">13.70</text>
+    <text class="ink score" x="690" y="285">37.11</text>
+  </g>
+
+  <g transform="translate(104 885)">
+    <rect class="cluster" x="0" y="0" width="24" height="24"/><text class="mono tiny" x="34" y="20">Cluster</text>
+    <rect class="route" x="145" y="0" width="24" height="24"/><text class="mono tiny" x="179" y="20">Route</text>
+    <rect class="soon" x="270" y="0" width="24" height="24"/><text class="mono tiny" x="304" y="20">Soonness</text>
+    <rect class="gap" x="430" y="0" width="24" height="24"/><text class="mono tiny" x="464" y="20">Gap</text>
+    <rect class="capacity" x="540" y="0" width="24" height="24"/><text class="mono tiny" x="574" y="20">Capacity</text>
+    <rect class="buffer" x="700" y="0" width="24" height="24"/><text class="mono tiny" x="734" y="20">Buffer</text>
+  </g>
+
+  <text class="ink h2" x="70" y="1008">Top Three Dates</text>
+  <g transform="translate(70 1032)">
+    <rect class="panel" x="0" y="0" width="465" height="92" rx="8"/>
+    <text class="ink rank" x="22" y="42">1</text>
+    <text class="mono small" x="70" y="34">Thu Jun 18, 2026</text>
+    <text class="muted tiny" x="70" y="64">12:00-15:05 | score 51.64 | existing day</text>
+
+    <rect class="panel" x="498" y="0" width="465" height="92" rx="8"/>
+    <text class="ink rank" x="520" y="42">2</text>
+    <text class="mono small" x="568" y="34">Mon May 25, 2026</text>
+    <text class="muted tiny" x="568" y="64">13:00-16:05 | score 45.32 | existing day</text>
+
+    <rect class="panel" x="996" y="0" width="465" height="92" rx="8"/>
+    <text class="ink rank" x="1018" y="42">3</text>
+    <text class="mono small" x="1066" y="34">Wed Jun 10, 2026</text>
+    <text class="muted tiny" x="1066" y="64">11:30-14:35 | score 37.11 | unbooked day</text>
+    <rect class="badge" x="1315" y="16" width="120" height="28" rx="14"/>
+    <text class="badgeText" x="1330" y="37">UNBOOKED</text>
+  </g>
+</svg>

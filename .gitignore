@@ -5,6 +5,8 @@ __pycache__/
 # Environment files with secrets
 .env
 .env.*
+service-account-key.json
+*service-account*.json
 
 # Scratch files
 junk_drawer/
