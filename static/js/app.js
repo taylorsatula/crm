@@ -29,6 +29,7 @@ import {
 } from "./views.js";
 
 const SURFACE_KEY = "crm.surface";
+const SINGLE_COLUMN_QUERY = "(max-width: 719px)";
 
 const state = {
   surface: localStorage.getItem(SURFACE_KEY) || "today",
@@ -129,6 +130,67 @@ function showApp() {
   setActiveSurface(state.surface, true);
 }
 
+function isSingleColumn() {
+  return window.matchMedia(SINGLE_COLUMN_QUERY).matches;
+}
+
+function setSurfaceView(surface, mode) {
+  const surfaceNode = els.surfaces.find((node) => node.dataset.surface === surface);
+  if (!surfaceNode) {
+    return;
+  }
+  surfaceNode.dataset.viewMode = mode;
+  const layout = surfaceNode.querySelector("[data-master-detail]");
+  if (layout) {
+    layout.dataset.viewMode = mode;
+  }
+}
+
+function showListView(surface) {
+  clearPatch();
+  setSurfaceView(surface, "list");
+}
+
+function detailToolbar(container) {
+  const surface = container.closest("[data-surface]");
+  const toolbar = document.createElement("div");
+  const button = document.createElement("button");
+  toolbar.className = "detail-toolbar";
+  button.type = "button";
+  button.className = "detail-back-button";
+  button.dataset.detailBack = surface ? surface.dataset.surface : state.surface;
+  button.textContent = `<- ${container.dataset.detailBackLabel || "Back"}`;
+  toolbar.append(button);
+  return toolbar;
+}
+
+function setDetailContent(container, content) {
+  const surface = container.closest("[data-surface]");
+  if (surface) {
+    setSurfaceView(surface.dataset.surface, "detail");
+  }
+  container.replaceChildren(detailToolbar(container), content);
+  if (surface && isSingleColumn()) {
+    surface.scrollIntoView({ block: "start" });
+    const backButton = container.querySelector("[data-detail-back]");
+    if (backButton) {
+      backButton.focus({ preventScroll: true });
+    }
+  }
+}
+
+function setDetailLoading(container) {
+  setDetailContent(container, emptyNode("Loading"));
+}
+
+function setDetailEmpty(container, text) {
+  container.replaceChildren(emptyNode(text));
+  const surface = container.closest("[data-surface]");
+  if (surface) {
+    setSurfaceView(surface.dataset.surface, "list");
+  }
+}
+
 async function setActiveSurface(surface, force) {
   state.surface = surface;
   localStorage.setItem(SURFACE_KEY, surface);
@@ -140,6 +202,7 @@ async function setActiveSurface(surface, force) {
     node.hidden = node.dataset.surface !== surface;
   });
   clearPatch();
+  setSurfaceView(surface, "list");
   await loadSurface(surface, force);
 }
 
@@ -273,11 +336,11 @@ function confirmAction({ title, hostText, bodyText, submitLabel, onConfirm }) {
 
 async function openCustomer(customerId) {
   const signal = nextSignal();
-  els.customerDetail.replaceChildren(emptyNode("Loading"));
+  setDetailLoading(els.customerDetail);
   try {
     const dossier = await api.control.customerDossier(customerId, { signal });
     state.activeCustomer = dossier;
-    els.customerDetail.replaceChildren(renderCustomerDossier(dossier));
+    setDetailContent(els.customerDetail, renderCustomerDossier(dossier));
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
@@ -288,11 +351,11 @@ async function openCustomer(customerId) {
 async function openTicket(ticketId, target) {
   const signal = nextSignal();
   const container = target || els.ticketDetail;
-  container.replaceChildren(emptyNode("Loading"));
+  setDetailLoading(container);
   try {
     const packet = await api.control.ticketPacket(ticketId, { signal });
     state.activeTicket = packet;
-    container.replaceChildren(renderTicketPacket(packet));
+    setDetailContent(container, renderTicketPacket(packet));
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
@@ -302,11 +365,11 @@ async function openTicket(ticketId, target) {
 
 async function openInvoice(invoiceId) {
   const signal = nextSignal();
-  els.invoiceDetail.replaceChildren(emptyNode("Loading"));
+  setDetailLoading(els.invoiceDetail);
   try {
     const invoice = await api.data("invoices", { id: invoiceId }, { signal });
     state.activeInvoice = invoice;
-    els.invoiceDetail.replaceChildren(renderInvoiceDetail(invoice));
+    setDetailContent(els.invoiceDetail, renderInvoiceDetail(invoice));
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
@@ -316,11 +379,11 @@ async function openInvoice(invoiceId) {
 
 async function openMessage(messageId) {
   const signal = nextSignal();
-  els.messageDetail.replaceChildren(emptyNode("Loading"));
+  setDetailLoading(els.messageDetail);
   try {
     const message = await api.data("messages", { id: messageId }, { signal });
     state.activeMessage = message;
-    els.messageDetail.replaceChildren(renderMessageDetail(message));
+    setDetailContent(els.messageDetail, renderMessageDetail(message));
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
@@ -334,13 +397,13 @@ function openService(serviceId) {
     return;
   }
   state.activeService = service;
-  els.catalogDetail.replaceChildren(renderServiceDetail(service));
+  setDetailContent(els.catalogDetail, renderServiceDetail(service));
 }
 
 async function renderTodayJob(ticketId) {
   const packet = await api.control.ticketPacket(ticketId);
   state.activeTicket = packet;
-  els.todayDetail.replaceChildren(renderJob(packet));
+  setDetailContent(els.todayDetail, renderJob(packet));
 }
 
 async function runTicketCommand(command, button) {
@@ -357,10 +420,10 @@ async function runTicketCommand(command, button) {
     workflows.scheduleMessage({ customer: packet.customer, ticket: packet.ticket });
   } else if (command === "job") {
     await setActiveSurface("today", false);
-    els.todayDetail.replaceChildren(renderJob(packet));
+    setDetailContent(els.todayDetail, renderJob(packet));
   } else if (command === "closeout") {
     await setActiveSurface("tickets", false);
-    els.ticketDetail.replaceChildren(renderCloseout(packet));
+    setDetailContent(els.ticketDetail, renderCloseout(packet));
   } else if (command === "invoice") {
     workflows.createInvoice({ packet });
   } else if (command === "note") {
@@ -400,7 +463,7 @@ async function runTicketCommand(command, button) {
       onConfirm: async () => {
         await ticketActions.delete(ticketId);
         showNotice("Ticket deleted", false);
-        els.ticketDetail.replaceChildren(emptyNode("Open a ticket."));
+        setDetailEmpty(els.ticketDetail, "Open a ticket.");
         await loadToday(true);
         await loadTickets(true);
       },
@@ -505,7 +568,7 @@ async function runInvoiceCommand(command, invoiceId) {
     const updated = await invoiceActions.send(invoiceId);
     showNotice("Invoice sent", false);
     state.activeInvoice = updated;
-    els.invoiceDetail.replaceChildren(renderInvoiceDetail(updated));
+    setDetailContent(els.invoiceDetail, renderInvoiceDetail(updated));
   } else if (command === "void") {
     confirmAction({
       title: "Void invoice",
@@ -516,7 +579,7 @@ async function runInvoiceCommand(command, invoiceId) {
         const updated = await invoiceActions.void(invoiceId);
         showNotice("Invoice voided", false);
         state.activeInvoice = updated;
-        els.invoiceDetail.replaceChildren(renderInvoiceDetail(updated));
+        setDetailContent(els.invoiceDetail, renderInvoiceDetail(updated));
       },
     });
   } else if (command === "payment") {
@@ -535,7 +598,7 @@ async function runMessageCommand(command, messageId) {
         await messageActions.cancel(messageId);
         showNotice("Message canceled", false);
         await loadMessages("pending");
-        els.messageDetail.replaceChildren(emptyNode("Open a message."));
+        setDetailEmpty(els.messageDetail, "Open a message.");
       },
     });
   }
@@ -561,7 +624,7 @@ async function runServiceCommand(command, serviceId) {
       onConfirm: async () => {
         await serviceActions.delete(service.id);
         showNotice("Service deleted", false);
-        els.catalogDetail.replaceChildren(emptyNode("Open a service."));
+        setDetailEmpty(els.catalogDetail, "Open a service.");
         await loadCatalog(true);
       },
     });
@@ -664,6 +727,10 @@ document.addEventListener("click", async (event) => {
       clearPatch();
       return;
     }
+    if (button.dataset.detailBack) {
+      showListView(button.dataset.detailBack);
+      return;
+    }
     if (button.dataset.surfaceLink) {
       await setActiveSurface(button.dataset.surfaceLink, false);
       return;
@@ -704,6 +771,10 @@ document.addEventListener("click", async (event) => {
     if (button.dataset.action === "logout") {
       await api.auth.logout();
       showAuth("");
+      return;
+    }
+    if (button.dataset.todayJob) {
+      await renderTodayJob(button.dataset.todayJob);
       return;
     }
     if (button.dataset.openCustomer) {

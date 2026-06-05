@@ -188,6 +188,10 @@ dd {
   min-width: 0;
 }
 
+.detail-toolbar {
+  display: none;
+}
+
 .cluster,
 .patch-panel {
   border: 1px solid #000;
@@ -352,6 +356,29 @@ legend {
 .money-cluster,
 .message-cluster {
   width: 100%;
+}
+
+@media (max-width: 719px) {
+  .surface[data-view-mode="detail"] > .surface-header {
+    display: none;
+  }
+
+  [data-master-detail][data-view-mode="list"] > [data-detail],
+  [data-master-detail][data-view-mode="detail"] > [data-master] {
+    display: none;
+  }
+
+  .detail-toolbar {
+    display: flex;
+    align-items: center;
+  }
+
+  .detail-back-button {
+    width: 100%;
+    min-height: 44px;
+    border-width: 2px;
+    font-weight: 800;
+  }
 }
 
 @media (min-width: 720px) {

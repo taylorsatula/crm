@@ -12,7 +12,10 @@ import {
 import { addressLine, customerContact, customerName, dateTime, money } from "./format.js";
 
 export function renderTodayRows(container, rows) {
-  renderList(container, rows, renderTicketPacketRow, "No appointments today");
+  renderList(container, rows, (packet) => renderTicketPacketRow(packet, {
+    action: "Open job",
+    dataset: { todayJob: packet.ticket.id },
+  }), "No appointments today");
 }
 
 export function renderTicketRows(container, rows) {
@@ -253,7 +256,7 @@ export function renderServiceDetail(service) {
   return row;
 }
 
-function renderTicketPacketRow(packet) {
+function renderTicketPacketRow(packet, options = {}) {
   const ticket = packet.ticket;
   const meta = [
     ticket.status,
@@ -265,8 +268,8 @@ function renderTicketPacketRow(packet) {
     primary: `${dateTime(ticket.scheduled_at)} - ${customerName(packet.customer)}`,
     secondary: `${addressLine(packet.address)} - ${packet.scope_summary}`,
     meta,
-    action: "Open job",
-    dataset: { openTicket: ticket.id },
+    action: options.action || "Open ticket",
+    dataset: options.dataset || { openTicket: ticket.id },
   });
 }
 

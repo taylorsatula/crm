@@ -42,12 +42,12 @@
               <button type="button" class="primary-button" data-action="book-appointment">Book appointment</button>
             </div>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Schedule</h2>
               <div id="today-list" class="dense-list" data-list="today"></div>
             </section>
-            <section id="today-detail" class="cluster" data-detail="today">
+            <section id="today-detail" class="cluster" data-detail="today" data-detail-back-label="Schedule">
               <p class="empty-state">Open a job from Today.</p>
             </section>
           </div>
@@ -62,12 +62,12 @@
               <button type="button" class="primary-button" data-action="new-customer">New customer</button>
             </form>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Results</h2>
               <div id="customers-list" class="dense-list" data-list="customers"></div>
             </section>
-            <section id="customer-detail" class="detail-stack" data-detail="customer">
+            <section id="customer-detail" class="detail-stack" data-detail="customer" data-detail-back-label="Customers">
               <p class="empty-state">Search or create a customer.</p>
             </section>
           </div>
@@ -80,12 +80,12 @@
               <button type="button" data-action="refresh">Refresh</button>
             </div>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Tickets</h2>
               <div id="tickets-list" class="dense-list" data-list="tickets"></div>
             </section>
-            <section id="ticket-detail" class="detail-stack" data-detail="ticket">
+            <section id="ticket-detail" class="detail-stack" data-detail="ticket" data-detail-back-label="Tickets">
               <p class="empty-state">Open a ticket.</p>
             </section>
           </div>
@@ -100,12 +100,12 @@
               <button type="button" data-invoice-filter="all">All</button>
             </div>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Queue</h2>
               <div id="invoices-list" class="dense-list" data-list="invoices"></div>
             </section>
-            <section id="invoice-detail" class="detail-stack" data-detail="invoice">
+            <section id="invoice-detail" class="detail-stack" data-detail="invoice" data-detail-back-label="Invoices">
               <p class="empty-state">Open an invoice.</p>
             </section>
           </div>
@@ -122,12 +122,12 @@
               <button type="button" data-message-filter="cancelled">Canceled</button>
             </div>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Queue</h2>
               <div id="messages-list" class="dense-list" data-list="messages"></div>
             </section>
-            <section id="message-detail" class="detail-stack" data-detail="message">
+            <section id="message-detail" class="detail-stack" data-detail="message" data-detail-back-label="Messages">
               <p class="empty-state">Open a message.</p>
             </section>
           </div>
@@ -140,12 +140,12 @@
               <button type="button" class="primary-button" data-action="new-service">New service</button>
             </div>
           </header>
-          <div class="work-area master-detail">
-            <section class="cluster">
+          <div class="work-area master-detail" data-master-detail data-view-mode="list">
+            <section class="cluster" data-master>
               <h2>Services</h2>
               <div id="catalog-list" class="dense-list" data-list="catalog"></div>
             </section>
-            <section id="catalog-detail" class="detail-stack" data-detail="catalog">
+            <section id="catalog-detail" class="detail-stack" data-detail="catalog" data-detail-back-label="Services">
               <p class="empty-state">Open a service.</p>
             </section>
           </div>
