@@ -421,6 +421,22 @@ class TestTicketGetCurrent:
 
         assert current is None
 
+    def test_returns_none_after_clock_out(self, db, as_test_user, ticket_service, test_customer, test_address):
+        """get_current returns None after the active ticket is clocked out."""
+        from core.models import TicketCreate
+
+        ticket = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=now_utc() + timedelta(hours=1)
+        ))
+        ticket_service.clock_in(ticket.id)
+        ticket_service.clock_out(ticket.id)
+
+        current = ticket_service.get_current()
+
+        assert current is None
+
     def test_returns_none_when_no_tickets(self, db, as_test_user, ticket_service):
         """get_current returns None when no tickets exist."""
         current = ticket_service.get_current()

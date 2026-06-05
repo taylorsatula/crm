@@ -5,9 +5,18 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 
 from api.base import success_response, ErrorCodes
+from core.models import InvoiceStatus, MessageStatus
 
 
-VALID_TYPES = {"customers", "tickets", "services", "invoices"}
+VALID_TYPES = {
+    "attributes",
+    "customers",
+    "invoices",
+    "messages",
+    "notes",
+    "services",
+    "tickets",
+}
 
 
 def create_data_router(services: dict) -> APIRouter:
@@ -20,6 +29,8 @@ def create_data_router(services: dict) -> APIRouter:
     invoice_svc = services["invoice"]
     note_svc = services["note"]
     address_svc = services["address"]
+    message_svc = services["message"]
+    attribute_svc = services["attribute"]
 
     # -------------------------------------------------------------------------
     # Convenience routes (must be registered before the generic /data route)
@@ -39,6 +50,59 @@ def create_data_router(services: dict) -> APIRouter:
         data = ticket.model_dump(mode="json") if ticket else None
         return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
 
+    @router.get("/data/today")
+    async def today_control_surface(request: Request):
+        tickets = ticket_svc.list_today()
+        rows = [
+            _ticket_packet(
+                ticket,
+                customer_svc,
+                address_svc,
+                line_item_svc,
+                catalog_svc,
+                note_svc,
+                message_svc,
+                invoice_svc,
+            )
+            for ticket in tickets
+        ]
+        return success_response(rows, request_id=request.state.request_id).model_dump(mode="json")
+
+    @router.get("/data/tickets/{ticket_id}/packet")
+    async def ticket_packet(ticket_id: str, request: Request):
+        ticket = ticket_svc.get_by_id(UUID(ticket_id))
+        if ticket is None:
+            raise ValueError(f"Ticket {ticket_id} not found")
+
+        data = _ticket_packet(
+            ticket,
+            customer_svc,
+            address_svc,
+            line_item_svc,
+            catalog_svc,
+            note_svc,
+            message_svc,
+            invoice_svc,
+        )
+        return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
+
+    @router.get("/data/customers/{customer_id}/dossier")
+    async def customer_dossier(customer_id: str, request: Request):
+        customer = customer_svc.get_by_id(UUID(customer_id))
+        if customer is None:
+            raise ValueError(f"Customer {customer_id} not found")
+
+        data = _customer_dossier(
+            customer,
+            address_svc,
+            ticket_svc,
+            invoice_svc,
+            note_svc,
+            message_svc,
+            attribute_svc,
+        )
+        return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
+
     # -------------------------------------------------------------------------
     # Generic data endpoint
     # -------------------------------------------------------------------------
@@ -50,6 +114,7 @@ def create_data_router(services: dict) -> APIRouter:
         id: str | None = Query(None),
         search: str | None = Query(None),
         customer_id: str | None = Query(None),
+        ticket_id: str | None = Query(None),
         include: str | None = Query(None),
         filter: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -65,13 +130,15 @@ def create_data_router(services: dict) -> APIRouter:
 
         if type == "customers":
             return _handle_customers(
-                customer_svc, address_svc, id, search, includes, limit, offset,
+                customer_svc, address_svc, ticket_svc, invoice_svc, note_svc,
+                message_svc, attribute_svc, id, search, includes, limit, offset,
                 request.state.request_id,
             )
 
         if type == "tickets":
             return _handle_tickets(
-                ticket_svc, line_item_svc, note_svc, id, customer_id, includes, limit,
+                ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc,
+                note_svc, message_svc, invoice_svc, id, customer_id, filter, includes, limit,
                 request.state.request_id,
             )
 
@@ -79,13 +146,43 @@ def create_data_router(services: dict) -> APIRouter:
             return _handle_services(catalog_svc, filter, request.state.request_id)
 
         if type == "invoices":
-            return _handle_invoices(invoice_svc, filter, limit, request.state.request_id)
+            return _handle_invoices(
+                invoice_svc, id, customer_id, filter, limit, request.state.request_id
+            )
+
+        if type == "messages":
+            return _handle_messages(
+                message_svc, id, customer_id, ticket_id, filter, limit,
+                request.state.request_id,
+            )
+
+        if type == "notes":
+            return _handle_notes(
+                note_svc, id, customer_id, ticket_id, limit, request.state.request_id
+            )
+
+        if type == "attributes":
+            return _handle_attributes(
+                attribute_svc, id, customer_id, request.state.request_id
+            )
 
     return router
 
 
 def _handle_customers(
-    customer_svc, address_svc, id, search, includes, limit, offset, request_id
+    customer_svc,
+    address_svc,
+    ticket_svc,
+    invoice_svc,
+    note_svc,
+    message_svc,
+    attribute_svc,
+    id,
+    search,
+    includes,
+    limit,
+    offset,
+    request_id,
 ):
     if id:
         customer = customer_svc.get_by_id(UUID(id))
@@ -96,6 +193,21 @@ def _handle_customers(
         if "addresses" in includes:
             addresses = address_svc.list_for_customer(customer.id)
             data["addresses"] = [a.model_dump(mode="json") for a in addresses]
+        if "tickets" in includes:
+            tickets = ticket_svc.list_for_customer(customer.id, limit)
+            data["tickets"] = [t.model_dump(mode="json") for t in tickets]
+        if "invoices" in includes:
+            invoices = invoice_svc.list_for_customer(customer.id, limit)
+            data["invoices"] = [i.model_dump(mode="json") for i in invoices]
+        if "notes" in includes:
+            notes = note_svc.list_for_customer(customer.id, limit)
+            data["note_items"] = [n.model_dump(mode="json") for n in notes]
+        if "messages" in includes:
+            messages = message_svc.list_for_customer(customer.id, limit)
+            data["messages"] = [m.model_dump(mode="json") for m in messages]
+        if "attributes" in includes:
+            attributes = attribute_svc.list_for_customer(customer.id)
+            data["attributes"] = [a.model_dump(mode="json") for a in attributes]
 
         return success_response(data, request_id=request_id).model_dump(mode="json")
 
@@ -114,7 +226,8 @@ def _handle_customers(
 
 
 def _handle_tickets(
-    ticket_svc, line_item_svc, note_svc, id, customer_id, includes, limit, request_id
+    ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc, note_svc,
+    message_svc, invoice_svc, id, customer_id, filter, includes, limit, request_id
 ):
     if id:
         ticket = ticket_svc.get_by_id(UUID(id))
@@ -127,7 +240,12 @@ def _handle_tickets(
             data["line_items"] = [li.model_dump(mode="json") for li in items]
         if "notes" in includes:
             notes = note_svc.list_for_ticket(ticket.id)
+            data["job_notes"] = data["notes"]
+            data["note_items"] = [n.model_dump(mode="json") for n in notes]
             data["notes"] = [n.model_dump(mode="json") for n in notes]
+        if "messages" in includes:
+            messages = message_svc.list_pending_for_ticket(ticket.id)
+            data["messages"] = [m.model_dump(mode="json") for m in messages]
 
         return success_response(data, request_id=request_id).model_dump(mode="json")
 
@@ -138,7 +256,29 @@ def _handle_tickets(
             request_id=request_id,
         ).model_dump(mode="json")
 
-    raise ValueError("'tickets' type requires 'id' or 'customer_id' parameter")
+    if filter == "upcoming":
+        tickets = ticket_svc.list_upcoming(limit)
+    elif filter == "all":
+        tickets = ticket_svc.list_all(limit)
+    else:
+        raise ValueError("'tickets' type requires 'id', 'customer_id', or filter=upcoming|all")
+
+    return success_response(
+        [
+            _ticket_packet(
+                ticket,
+                customer_svc,
+                address_svc,
+                line_item_svc,
+                catalog_svc,
+                note_svc,
+                message_svc,
+                invoice_svc,
+            )
+            for ticket in tickets
+        ],
+        request_id=request_id,
+    ).model_dump(mode="json")
 
 
 def _handle_services(catalog_svc, filter, request_id):
@@ -153,13 +293,243 @@ def _handle_services(catalog_svc, filter, request_id):
     ).model_dump(mode="json")
 
 
-def _handle_invoices(invoice_svc, filter, limit, request_id):
-    if filter == "unpaid":
+def _handle_invoices(invoice_svc, id, customer_id, filter, limit, request_id):
+    if id:
+        invoice = invoice_svc.get_by_id(UUID(id))
+        if invoice is None:
+            raise ValueError(f"Invoice {id} not found")
+        return success_response(invoice.model_dump(mode="json"), request_id=request_id).model_dump(mode="json")
+
+    if customer_id:
+        invoices = invoice_svc.list_for_customer(UUID(customer_id), limit)
+    elif filter == "unpaid":
         invoices = invoice_svc.list_unpaid(limit)
+    elif filter == "draft":
+        invoices = invoice_svc.list_by_status(InvoiceStatus.DRAFT, limit)
+    elif filter == "all":
+        invoices = invoice_svc.list_all(limit)
     else:
-        raise ValueError("'invoices' type requires 'filter' parameter (e.g. filter=unpaid)")
+        raise ValueError("'invoices' type requires 'id', 'customer_id', or filter=unpaid|draft|all")
 
     return success_response(
         [i.model_dump(mode="json") for i in invoices],
         request_id=request_id,
     ).model_dump(mode="json")
+
+
+def _handle_messages(message_svc, id, customer_id, ticket_id, filter, limit, request_id):
+    if id:
+        message = message_svc.get_by_id(UUID(id))
+        if message is None:
+            raise ValueError(f"Message {id} not found")
+        return success_response(message.model_dump(mode="json"), request_id=request_id).model_dump(mode="json")
+
+    if customer_id:
+        messages = message_svc.list_for_customer(UUID(customer_id), limit)
+    elif ticket_id:
+        messages = message_svc.list_pending_for_ticket(UUID(ticket_id))
+    elif filter == "due":
+        messages = message_svc.list_pending_due(limit)
+    elif filter in {"pending", "sent", "failed", "cancelled", "skipped"}:
+        messages = message_svc.list_by_status(MessageStatus(filter), limit)
+    else:
+        raise ValueError(
+            "'messages' type requires 'id', 'customer_id', 'ticket_id', "
+            "or filter=due|pending|sent|failed|cancelled|skipped"
+        )
+
+    return success_response(
+        [m.model_dump(mode="json") for m in messages],
+        request_id=request_id,
+    ).model_dump(mode="json")
+
+
+def _handle_notes(note_svc, id, customer_id, ticket_id, limit, request_id):
+    if id:
+        note = note_svc.get_by_id(UUID(id))
+        if note is None:
+            raise ValueError(f"Note {id} not found")
+        return success_response(note.model_dump(mode="json"), request_id=request_id).model_dump(mode="json")
+
+    if customer_id:
+        notes = note_svc.list_for_customer(UUID(customer_id), limit)
+    elif ticket_id:
+        notes = note_svc.list_for_ticket(UUID(ticket_id), limit)
+    else:
+        raise ValueError("'notes' type requires 'id', 'customer_id', or 'ticket_id'")
+
+    return success_response(
+        [n.model_dump(mode="json") for n in notes],
+        request_id=request_id,
+    ).model_dump(mode="json")
+
+
+def _handle_attributes(attribute_svc, id, customer_id, request_id):
+    if id:
+        attribute = attribute_svc.get_by_id(UUID(id))
+        if attribute is None:
+            raise ValueError(f"Attribute {id} not found")
+        return success_response(attribute.model_dump(mode="json"), request_id=request_id).model_dump(mode="json")
+
+    if not customer_id:
+        raise ValueError("'attributes' type requires 'id' or 'customer_id'")
+
+    attributes = attribute_svc.list_for_customer(UUID(customer_id))
+    return success_response(
+        [a.model_dump(mode="json") for a in attributes],
+        request_id=request_id,
+    ).model_dump(mode="json")
+
+
+def _customer_display_name(customer) -> str:
+    if customer.business_name:
+        return customer.business_name
+    parts = [customer.first_name, customer.last_name]
+    name = " ".join(part for part in parts if part)
+    return name or "Unnamed customer"
+
+
+def _customer_summary(customer) -> dict:
+    data = customer.model_dump(mode="json")
+    data["display_name"] = _customer_display_name(customer)
+    return data
+
+
+def _address_one_line(address) -> str:
+    parts = [address.street]
+    if address.street2:
+        parts.append(address.street2)
+    parts.append(f"{address.city}, {address.state} {address.zip}")
+    return ", ".join(parts)
+
+
+def _address_summary(address) -> dict:
+    data = address.model_dump(mode="json")
+    data["one_line"] = _address_one_line(address)
+    return data
+
+
+def _line_item_payloads(items, catalog_svc) -> list[dict]:
+    payloads = []
+    for item in items:
+        data = item.model_dump(mode="json")
+        service = catalog_svc.get_by_id(item.service_id)
+        if service is not None:
+            data["service"] = service.model_dump(mode="json")
+            data["service_name"] = service.name
+            data["pricing_type"] = service.pricing_type.value
+        else:
+            data["service"] = None
+            data["service_name"] = str(item.service_id)
+            data["pricing_type"] = None
+        payloads.append(data)
+    return payloads
+
+
+def _scope_summary(line_items: list[dict]) -> str:
+    if not line_items:
+        return "No line items"
+
+    labels = [
+        item.get("description") or item.get("service_name") or "Line item"
+        for item in line_items[:2]
+    ]
+    remaining = len(line_items) - len(labels)
+    if remaining:
+        labels.append(f"+{remaining} more")
+    return ", ".join(labels)
+
+
+def _ticket_clock_state(ticket) -> str:
+    if ticket.clock_in_at is not None and ticket.clock_out_at is None:
+        return "in_progress"
+    if ticket.clock_out_at is not None:
+        return "clocked_out"
+    return "not_started"
+
+
+def _ticket_packet(
+    ticket,
+    customer_svc,
+    address_svc,
+    line_item_svc,
+    catalog_svc,
+    note_svc,
+    message_svc,
+    invoice_svc,
+) -> dict:
+    customer = customer_svc.get_by_id(ticket.customer_id)
+    if customer is None:
+        raise ValueError(f"Customer {ticket.customer_id} not found")
+
+    address = address_svc.get_by_id(ticket.address_id)
+    if address is None:
+        raise ValueError(f"Address {ticket.address_id} not found")
+
+    items = line_item_svc.list_for_ticket(ticket.id)
+    line_items = _line_item_payloads(items, catalog_svc)
+    notes = note_svc.list_for_ticket(ticket.id)
+    messages = message_svc.list_pending_for_ticket(ticket.id)
+    invoices = [
+        invoice
+        for invoice in invoice_svc.list_for_customer(ticket.customer_id)
+        if invoice.ticket_id == ticket.id
+    ]
+
+    total_price_cents = sum(item["total_price_cents"] for item in line_items)
+
+    return {
+        "ticket": ticket.model_dump(mode="json"),
+        "customer": _customer_summary(customer),
+        "address": _address_summary(address),
+        "line_items": line_items,
+        "scope_summary": _scope_summary(line_items),
+        "total_price_cents": total_price_cents,
+        "job_notes": ticket.notes,
+        "notes": [note.model_dump(mode="json") for note in notes],
+        "pending_messages": [message.model_dump(mode="json") for message in messages],
+        "pending_message_count": len(messages),
+        "invoices": [invoice.model_dump(mode="json") for invoice in invoices],
+        "invoice_summary": invoices[0].model_dump(mode="json") if invoices else None,
+        "clock_state": _ticket_clock_state(ticket),
+    }
+
+
+def _customer_dossier(
+    customer,
+    address_svc,
+    ticket_svc,
+    invoice_svc,
+    note_svc,
+    message_svc,
+    attribute_svc,
+) -> dict:
+    addresses = address_svc.list_for_customer(customer.id)
+    tickets = ticket_svc.list_for_customer(customer.id, 20)
+    invoices = invoice_svc.list_for_customer(customer.id, 20)
+    notes = note_svc.list_for_customer(customer.id, 20)
+    messages = message_svc.list_for_customer(customer.id, 20)
+    attributes = attribute_svc.list_for_customer(customer.id)
+
+    open_invoices = [
+        invoice
+        for invoice in invoices
+        if invoice.status.value in {"draft", "sent", "partial"}
+    ]
+    pending_messages = [
+        message
+        for message in messages
+        if message.status.value == "pending"
+    ]
+
+    return {
+        "customer": _customer_summary(customer),
+        "addresses": [_address_summary(address) for address in addresses],
+        "attributes": [attribute.model_dump(mode="json") for attribute in attributes],
+        "notes": [note.model_dump(mode="json") for note in notes],
+        "recent_tickets": [ticket.model_dump(mode="json") for ticket in tickets],
+        "invoices": [invoice.model_dump(mode="json") for invoice in invoices],
+        "open_invoices": [invoice.model_dump(mode="json") for invoice in open_invoices],
+        "messages": [message.model_dump(mode="json") for message in messages],
+        "pending_messages": [message.model_dump(mode="json") for message in pending_messages],
+    }

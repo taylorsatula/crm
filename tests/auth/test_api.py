@@ -315,6 +315,25 @@ class TestVerifyMagicLink:
         assert second_response.json()["error"]["code"] == "INVALID_TOKEN"
 
 
+class TestDevelopmentAutobypass:
+    """Test temporary local frontend auth bypass."""
+
+    def test_dev_autobypass_sets_session_cookie(self, client):
+        """Dev bypass mints a real session usable by protected auth routes."""
+        response = client.post("/auth/dev-autobypass")
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert response.json()["data"]["user_id"] == "00000000-0000-0000-0000-000000000001"
+        assert response.json()["data"]["temporary_development_autobypass"] is True
+        assert "session_token" in response.cookies
+
+        me_response = client.get("/auth/me")
+
+        assert me_response.status_code == 200
+        assert me_response.json()["data"]["user_id"] == "00000000-0000-0000-0000-000000000001"
+
+
 class TestLogout:
     """Test POST /auth/logout endpoint."""
 

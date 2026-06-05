@@ -315,6 +315,29 @@ class MessageService:
 
         return [ScheduledMessage.model_validate(row) for row in rows]
 
+    def list_by_status(self, status: MessageStatus, limit: int = 50) -> list[ScheduledMessage]:
+        """
+        List messages by delivery status.
+
+        Args:
+            status: Message status to list
+            limit: Maximum results
+
+        Returns:
+            List of messages ordered by scheduled time
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM scheduled_messages
+            WHERE status = %s
+            ORDER BY scheduled_for ASC
+            LIMIT %s
+            """,
+            (status.value, limit)
+        )
+
+        return [ScheduledMessage.model_validate(row) for row in rows]
+
     def process_pending(
         self,
         email_client,

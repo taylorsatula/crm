@@ -94,7 +94,7 @@ class TicketService:
             Ticket if found, None otherwise.
         """
         row = self.postgres.execute_single(
-            "SELECT * FROM tickets WHERE id = %s",
+            "SELECT * FROM tickets WHERE id = %s AND deleted_at IS NULL",
             (ticket_id,)
         )
 
@@ -397,6 +397,7 @@ class TicketService:
             """
             SELECT * FROM tickets
             WHERE scheduled_at >= %s AND scheduled_at <= %s
+              AND deleted_at IS NULL
             ORDER BY scheduled_at ASC
             LIMIT %s
             """,
@@ -420,9 +421,58 @@ class TicketService:
             """
             SELECT * FROM tickets
             WHERE scheduled_at >= %s AND scheduled_at < %s
+              AND deleted_at IS NULL
             ORDER BY scheduled_at ASC
             """,
             (today_start, tomorrow_start)
+        )
+
+        return [Ticket.model_validate(row) for row in rows]
+
+    def list_upcoming(self, limit: int = 50) -> list[Ticket]:
+        """
+        List upcoming active tickets.
+
+        Args:
+            limit: Maximum results
+
+        Returns:
+            Future scheduled or in-progress tickets ordered by scheduled_at ASC.
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM tickets
+            WHERE deleted_at IS NULL
+              AND (
+                (status = %s AND scheduled_at >= %s)
+                OR status = %s
+              )
+            ORDER BY scheduled_at ASC
+            LIMIT %s
+            """,
+            (TicketStatus.SCHEDULED.value, now_utc(), TicketStatus.IN_PROGRESS.value, limit)
+        )
+
+        return [Ticket.model_validate(row) for row in rows]
+
+    def list_all(self, limit: int = 50) -> list[Ticket]:
+        """
+        List all non-deleted tickets.
+
+        Args:
+            limit: Maximum results
+
+        Returns:
+            Tickets ordered by scheduled_at DESC.
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM tickets
+            WHERE deleted_at IS NULL
+            ORDER BY scheduled_at DESC
+            LIMIT %s
+            """,
+            (limit,)
         )
 
         return [Ticket.model_validate(row) for row in rows]
@@ -438,6 +488,9 @@ class TicketService:
             """
             SELECT * FROM tickets
             WHERE status = %s
+              AND clock_in_at IS NOT NULL
+              AND clock_out_at IS NULL
+              AND deleted_at IS NULL
             ORDER BY clock_in_at DESC
             LIMIT 1
             """,
@@ -464,6 +517,7 @@ class TicketService:
             """
             SELECT * FROM tickets
             WHERE customer_id = %s
+              AND deleted_at IS NULL
             ORDER BY scheduled_at DESC
             LIMIT %s
             """,

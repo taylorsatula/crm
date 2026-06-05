@@ -64,6 +64,7 @@ def test_create_app_registers_phase_5_routes():
     route_paths = {route.path for route in app.routes}
 
     assert {
+        "/",
         "/health",
         "/health/ready",
         "/health/live",
@@ -115,3 +116,24 @@ def test_assets_are_public_and_served_from_static():
 
     assert response.status_code == 200
     assert response.text.strip() == "assets-ok"
+
+
+def test_root_app_shell_is_public_html():
+    factory = RecordingFactory()
+    app = create_app(container_factory=factory)
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert '<script type="module" src="/assets/js/app.js"></script>' in response.text
+
+
+def test_protected_api_stays_protected_without_session():
+    factory = RecordingFactory()
+    app = create_app(container_factory=factory)
+
+    response = TestClient(app).get("/api/data", params={"type": "customers"})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "NOT_AUTHENTICATED"

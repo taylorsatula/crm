@@ -7,6 +7,7 @@ from uuid import uuid4
 from core.models import (
     CustomerCreate, TicketCreate, ServiceCreate, PricingType,
     LineItemCreate, NoteCreate, AddressCreate,
+    ScheduledMessageCreate, MessageType, AttributeCreate,
 )
 from utils.timezone import now_utc
 
@@ -63,6 +64,26 @@ def sample_note(as_test_user, note_service, sample_customer):
     return note_service.create(NoteCreate(
         customer_id=sample_customer.id,
         content="Test note content",
+    ))
+
+
+@pytest.fixture
+def sample_message(as_test_user, message_service, sample_customer):
+    return message_service.schedule(ScheduledMessageCreate(
+        customer_id=sample_customer.id,
+        message_type=MessageType.CUSTOM,
+        subject="Follow up",
+        body="Confirm next visit",
+        scheduled_for=now_utc() + timedelta(days=1),
+    ))
+
+
+@pytest.fixture
+def sample_attribute(as_test_user, attribute_service, sample_customer):
+    return attribute_service.create(AttributeCreate(
+        customer_id=sample_customer.id,
+        key="gate_code",
+        value="1234",
     ))
 
 
@@ -204,6 +225,36 @@ class TestDataCustomers:
         assert data["addresses"][0]["street"] == "123 Main St"
         assert data["addresses"][0]["city"] == "Austin"
 
+    def test_include_customer_activity(
+        self,
+        client,
+        as_test_user,
+        sample_customer,
+        sample_ticket,
+        sample_note,
+        sample_message,
+        sample_attribute,
+        invoice_service,
+        sample_line_item,
+    ):
+        invoice = invoice_service.create_from_ticket(sample_ticket.id)
+
+        response = client.get("/api/data", params={
+            "type": "customers",
+            "id": str(sample_customer.id),
+            "include": "tickets,invoices,notes,messages,attributes",
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["id"] == str(sample_customer.id)
+        assert data["notes"] is None
+        assert data["tickets"][0]["id"] == str(sample_ticket.id)
+        assert data["invoices"][0]["id"] == str(invoice.id)
+        assert data["note_items"][0]["id"] == str(sample_note.id)
+        assert data["messages"][0]["id"] == str(sample_message.id)
+        assert data["attributes"][0]["id"] == str(sample_attribute.id)
+
 
 # =============================================================================
 # TICKETS
@@ -274,6 +325,8 @@ class TestDataTickets:
         assert response.status_code == 200
         data = response.json()["data"]
         assert "notes" in data
+        assert "note_items" in data
+        assert data["job_notes"] is None
         assert len(data["notes"]) == 1
         assert data["notes"][0]["content"] == "Ticket note here"
 
@@ -293,6 +346,39 @@ class TestDataTickets:
         data = response.json()["data"]
         assert len(data["line_items"]) == 1
         assert len(data["notes"]) == 1
+
+    def test_include_pending_messages(self, client, as_test_user, sample_ticket, sample_customer, message_service):
+        message = message_service.schedule(ScheduledMessageCreate(
+            customer_id=sample_customer.id,
+            ticket_id=sample_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            subject="Reminder",
+            scheduled_for=now_utc() + timedelta(hours=1),
+        ))
+
+        response = client.get("/api/data", params={
+            "type": "tickets",
+            "id": str(sample_ticket.id),
+            "include": "messages",
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["id"] == str(message.id)
+
+    def test_list_upcoming_ticket_packets(self, client, sample_ticket):
+        response = client.get("/api/data", params={
+            "type": "tickets",
+            "filter": "upcoming",
+        })
+
+        assert response.status_code == 200
+        rows = response.json()["data"]
+        row = next(item for item in rows if item["ticket"]["id"] == str(sample_ticket.id))
+        assert row["customer"]["display_name"] == "Test Customer"
+        assert row["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert row["scope_summary"] == "No line items"
 
 
 # =============================================================================
@@ -346,11 +432,131 @@ class TestTicketsCurrent:
         assert data["id"] == str(sample_ticket.id)
         assert data["status"] == "in_progress"
 
+    def test_returns_null_after_clock_out(self, client, as_test_user, ticket_service, sample_ticket):
+        ticket_service.clock_in(sample_ticket.id)
+        ticket_service.clock_out(sample_ticket.id)
+
+        response = client.get("/api/data/tickets/current")
+
+        assert response.status_code == 200
+        assert response.json()["data"] is None
+
     def test_returns_null_when_none_in_progress(self, client, as_test_user):
         response = client.get("/api/data/tickets/current")
 
         assert response.status_code == 200
         assert response.json()["data"] is None
+
+
+class TestControlSurfaceReadShapes:
+
+    def test_today_returns_dense_operator_rows(
+        self,
+        client,
+        as_test_user,
+        ticket_service,
+        line_item_service,
+        message_service,
+        invoice_service,
+        sample_customer,
+        sample_address,
+        sample_service,
+    ):
+        today_at_10 = datetime.combine(
+            now_utc().date(), time(10, 0), tzinfo=timezone.utc
+        )
+        ticket = ticket_service.create(TicketCreate(
+            customer_id=sample_customer.id,
+            address_id=sample_address.id,
+            scheduled_at=today_at_10,
+        ))
+        line_item_service.create(ticket.id, LineItemCreate(service_id=sample_service.id))
+        message_service.schedule(ScheduledMessageCreate(
+            customer_id=sample_customer.id,
+            ticket_id=ticket.id,
+            message_type=MessageType.APPOINTMENT_CONFIRMATION,
+            subject="Confirm",
+            scheduled_for=now_utc() + timedelta(hours=1),
+        ))
+        invoice = invoice_service.create_from_ticket(ticket.id)
+
+        response = client.get("/api/data/today")
+
+        assert response.status_code == 200
+        rows = response.json()["data"]
+        row = next(item for item in rows if item["ticket"]["id"] == str(ticket.id))
+        assert row["customer"]["display_name"] == "Test Customer"
+        assert row["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert row["line_items"][0]["service_name"] == "Window Cleaning"
+        assert row["scope_summary"] == "Window Cleaning"
+        assert row["pending_message_count"] == 1
+        assert row["invoice_summary"]["id"] == str(invoice.id)
+        assert row["clock_state"] == "not_started"
+
+    def test_ticket_packet_returns_operational_context(
+        self,
+        client,
+        as_test_user,
+        sample_ticket,
+        sample_line_item,
+        sample_customer,
+        note_service,
+        message_service,
+        invoice_service,
+    ):
+        note = note_service.create(NoteCreate(
+            ticket_id=sample_ticket.id,
+            content="Bring ladder",
+        ))
+        message = message_service.schedule(ScheduledMessageCreate(
+            customer_id=sample_customer.id,
+            ticket_id=sample_ticket.id,
+            message_type=MessageType.APPOINTMENT_REMINDER,
+            subject="Reminder",
+            scheduled_for=now_utc() + timedelta(hours=1),
+        ))
+        invoice = invoice_service.create_from_ticket(sample_ticket.id)
+
+        response = client.get(f"/api/data/tickets/{sample_ticket.id}/packet")
+
+        assert response.status_code == 200
+        packet = response.json()["data"]
+        assert packet["ticket"]["id"] == str(sample_ticket.id)
+        assert packet["customer"]["display_name"] == "Test Customer"
+        assert packet["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert packet["line_items"][0]["id"] == str(sample_line_item.id)
+        assert packet["notes"][0]["id"] == str(note.id)
+        assert packet["pending_messages"][0]["id"] == str(message.id)
+        assert packet["invoice_summary"]["id"] == str(invoice.id)
+
+    def test_customer_dossier_returns_knowledge_clusters(
+        self,
+        client,
+        as_test_user,
+        sample_customer,
+        sample_address,
+        sample_ticket,
+        sample_note,
+        sample_message,
+        sample_attribute,
+        invoice_service,
+        sample_line_item,
+    ):
+        invoice = invoice_service.create_from_ticket(sample_ticket.id)
+
+        response = client.get(f"/api/data/customers/{sample_customer.id}/dossier")
+
+        assert response.status_code == 200
+        dossier = response.json()["data"]
+        assert dossier["customer"]["display_name"] == "Test Customer"
+        assert dossier["addresses"][0]["id"] == str(sample_address.id)
+        assert dossier["attributes"][0]["id"] == str(sample_attribute.id)
+        assert dossier["notes"][0]["id"] == str(sample_note.id)
+        assert dossier["recent_tickets"][0]["id"] == str(sample_ticket.id)
+        assert dossier["invoices"][0]["id"] == str(invoice.id)
+        assert dossier["open_invoices"][0]["id"] == str(invoice.id)
+        assert dossier["messages"][0]["id"] == str(sample_message.id)
+        assert dossier["pending_messages"][0]["id"] == str(sample_message.id)
 
 
 # =============================================================================
@@ -403,6 +609,123 @@ class TestDataInvoices:
         assert data[0]["id"] == str(invoice.id)
         assert data[0]["status"] == "sent"
         assert data[0]["total_amount_cents"] == 5000
+
+    def test_get_invoice_by_id(self, client, as_test_user, invoice_service, sample_ticket, sample_line_item):
+        invoice = invoice_service.create_from_ticket(sample_ticket.id)
+
+        response = client.get("/api/data", params={
+            "type": "invoices",
+            "id": str(invoice.id),
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == str(invoice.id)
+
+    def test_list_invoices_for_customer(
+        self, client, as_test_user, invoice_service, sample_customer, sample_ticket, sample_line_item
+    ):
+        invoice = invoice_service.create_from_ticket(sample_ticket.id)
+
+        response = client.get("/api/data", params={
+            "type": "invoices",
+            "customer_id": str(sample_customer.id),
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"][0]["id"] == str(invoice.id)
+
+
+# =============================================================================
+# MESSAGES
+# =============================================================================
+
+
+class TestDataMessages:
+
+    def test_get_message_by_id(self, client, sample_message):
+        response = client.get("/api/data", params={
+            "type": "messages",
+            "id": str(sample_message.id),
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == str(sample_message.id)
+
+    def test_list_messages_for_customer(self, client, sample_message, sample_customer):
+        response = client.get("/api/data", params={
+            "type": "messages",
+            "customer_id": str(sample_customer.id),
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(sample_message.id)
+
+    def test_list_pending_messages_for_ticket(
+        self, client, as_test_user, message_service, sample_customer, sample_ticket
+    ):
+        message = message_service.schedule(ScheduledMessageCreate(
+            customer_id=sample_customer.id,
+            ticket_id=sample_ticket.id,
+            message_type=MessageType.APPOINTMENT_CONFIRMATION,
+            scheduled_for=now_utc() + timedelta(hours=1),
+        ))
+
+        response = client.get("/api/data", params={
+            "type": "messages",
+            "ticket_id": str(sample_ticket.id),
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(message.id)
+
+
+# =============================================================================
+# NOTES
+# =============================================================================
+
+
+class TestDataNotes:
+
+    def test_list_notes_for_customer(self, client, sample_note, sample_customer):
+        response = client.get("/api/data", params={
+            "type": "notes",
+            "customer_id": str(sample_customer.id),
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"][0]["id"] == str(sample_note.id)
+
+
+# =============================================================================
+# ATTRIBUTES
+# =============================================================================
+
+
+class TestDataAttributes:
+
+    def test_get_attribute_by_id(self, client, sample_attribute):
+        response = client.get("/api/data", params={
+            "type": "attributes",
+            "id": str(sample_attribute.id),
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == str(sample_attribute.id)
+
+    def test_list_attributes_for_customer(self, client, sample_attribute, sample_customer):
+        response = client.get("/api/data", params={
+            "type": "attributes",
+            "customer_id": str(sample_customer.id),
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["key"] == "gate_code"
 
 
 # =============================================================================

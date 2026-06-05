@@ -7,6 +7,7 @@ from uuid import uuid4
 from core.models import (
     CustomerCreate, TicketCreate, ServiceCreate, PricingType,
     LineItemCreate, AddressCreate, NoteCreate,
+    ScheduledMessageCreate, MessageType, AttributeCreate,
 )
 from utils.timezone import now_utc
 
@@ -621,6 +622,90 @@ class TestCatalogActions:
         })
 
         assert response.status_code == 404
+
+
+# =============================================================================
+# ATTRIBUTE ACTIONS
+# =============================================================================
+
+
+class TestAttributeActions:
+
+    def test_create_attribute(self, client, sample_customer):
+        response = client.post("/api/actions", json={
+            "domain": "attribute",
+            "action": "create",
+            "data": {
+                "customer_id": str(sample_customer.id),
+                "key": "property_type",
+                "value": "commercial",
+            },
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["customer_id"] == str(sample_customer.id)
+        assert data["key"] == "property_type"
+        assert data["value"] == "commercial"
+
+    def test_delete_attribute(self, client, as_test_user, attribute_service, sample_customer):
+        attr = attribute_service.create(AttributeCreate(
+            customer_id=sample_customer.id,
+            key="gate_code",
+            value="4321",
+        ))
+
+        response = client.post("/api/actions", json={
+            "domain": "attribute",
+            "action": "delete",
+            "data": {"id": str(attr.id)},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+
+# =============================================================================
+# MESSAGE ACTIONS
+# =============================================================================
+
+
+class TestMessageActions:
+
+    def test_schedule_message(self, client, sample_customer):
+        response = client.post("/api/actions", json={
+            "domain": "message",
+            "action": "schedule",
+            "data": {
+                "customer_id": str(sample_customer.id),
+                "message_type": "custom",
+                "subject": "Follow up",
+                "body": "Can we book the next visit?",
+                "scheduled_for": (now_utc() + timedelta(days=1)).isoformat(),
+            },
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["customer_id"] == str(sample_customer.id)
+        assert data["status"] == "pending"
+        assert data["subject"] == "Follow up"
+
+    def test_cancel_message(self, client, as_test_user, message_service, sample_customer):
+        message = message_service.schedule(ScheduledMessageCreate(
+            customer_id=sample_customer.id,
+            message_type=MessageType.CUSTOM,
+            scheduled_for=now_utc() + timedelta(days=1),
+        ))
+
+        response = client.post("/api/actions", json={
+            "domain": "message",
+            "action": "cancel",
+            "data": {"id": str(message.id)},
+        })
+
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "cancelled"
 
 
 # =============================================================================

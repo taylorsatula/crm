@@ -22,15 +22,29 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Public paths bypass authentication entirely.
     """
 
-    PUBLIC_PATHS = [
+    EXACT_PUBLIC_PATHS = {
+        "/",
         "/auth/request-link",
         "/auth/verify",
+        # =====================================================================
+        # TEMPORARY DEVELOPMENT AUTOBYPASS - REMOVE BEFORE RELEASE.
+        # This intentionally allows unauthenticated local browser sessions to
+        # mint a session cookie without a magic link. It exists only so the
+        # greenfield wireframe can be exercised rapidly during private local
+        # development.
+        # =====================================================================
+        "/auth/dev-autobypass",
         "/auth/logout",
         "/health",
+        "/health/ready",
+        "/health/live",
         "/docs",
         "/openapi.json",
+    }
+    PREFIX_PUBLIC_PATHS = (
         "/assets/",
-    ]
+        "/docs/",
+    )
 
     def __init__(self, app, session_manager: SessionManager):
         super().__init__(app)
@@ -38,8 +52,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _is_public_path(self, path: str) -> bool:
         """Check if path is in public paths list."""
-        for public_path in self.PUBLIC_PATHS:
-            if path == public_path or path.startswith(public_path):
+        if path in self.EXACT_PUBLIC_PATHS:
+            return True
+
+        for public_path in self.PREFIX_PUBLIC_PATHS:
+            if path.startswith(public_path):
                 return True
         return False
 

@@ -7,6 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.actions import create_actions_router
@@ -243,6 +244,10 @@ def create_app(
         version=app_config.version,
         lifespan=lifespan,
     )
+
+    @app.get("/", include_in_schema=False)
+    async def app_shell():
+        return FileResponse(app_config.static_dir / "index.html")
 
     app.include_router(create_health_router(_health_proxies(container_ref)))
     app.include_router(create_data_router(_service_proxies(container_ref)), prefix="/api")

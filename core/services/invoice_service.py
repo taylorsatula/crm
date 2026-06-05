@@ -377,3 +377,49 @@ class InvoiceService:
         )
 
         return [Invoice.model_validate(row) for row in rows]
+
+    def list_by_status(self, status: InvoiceStatus, limit: int = 50) -> list[Invoice]:
+        """
+        List invoices by lifecycle status.
+
+        Args:
+            status: Invoice status to list
+            limit: Maximum results
+
+        Returns:
+            List of invoices ordered by creation time DESC
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM invoices
+            WHERE status = %s
+              AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (status.value, limit)
+        )
+
+        return [Invoice.model_validate(row) for row in rows]
+
+    def list_all(self, limit: int = 50) -> list[Invoice]:
+        """
+        List invoices for the current user.
+
+        Args:
+            limit: Maximum results
+
+        Returns:
+            List of invoices ordered by creation time DESC
+        """
+        rows = self.postgres.execute(
+            """
+            SELECT * FROM invoices
+            WHERE deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,)
+        )
+
+        return [Invoice.model_validate(row) for row in rows]

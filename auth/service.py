@@ -310,6 +310,16 @@ class AuthService:
             ip_address=ip_address,
         )
 
+    def create_development_autobypass_session(self, user_id: UUID) -> Session:
+        # =====================================================================
+        # TEMPORARY DEVELOPMENT AUTOBYPASS - REMOVE BEFORE RELEASE.
+        # This deliberately mints a real session for a hardcoded local user id
+        # without verifying an email token. It is insecure by design and exists
+        # only to make local frontend iteration fast while the app is still a
+        # private wireframe. Do not generalize this into a production feature.
+        # =====================================================================
+        return self._session_manager.create_session(user_id)
+
     def validate_session(self, token: str) -> Session:
         """Validate session token.
 

@@ -30,6 +30,10 @@ def app_with_middleware(mock_session_manager):
         session_manager=mock_session_manager,
     )
 
+    @app.get("/")
+    async def app_shell():
+        return {"app": True}
+
     @app.get("/api/data/protected")
     async def protected_route(request: Request):
         return {"user_id": str(request.state.user_id)}
@@ -63,6 +67,15 @@ def app_with_middleware(mock_session_manager):
 
 class TestPublicPaths:
     """Test that public paths skip authentication."""
+
+    def test_root_no_cookie_succeeds(self, app_with_middleware):
+        """Root app shell works without session cookie."""
+        client = TestClient(app_with_middleware)
+
+        response = client.get("/")
+
+        assert response.status_code == 200
+        assert response.json()["app"] is True
 
     def test_auth_request_link_no_cookie_succeeds(self, app_with_middleware):
         """Auth request-link endpoint works without session cookie."""

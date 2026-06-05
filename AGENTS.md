@@ -114,6 +114,9 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 - **Progressive Enhancement**: Core functionality works without JS
 - **Offline-First Mindset**: Cache aggressively, sync when connected
 - **Mobile-First**: Design for thumb reach and slow connections
+- **Task-Relevant UI Only**: Every visible element must further the plot of the current workflow. An element does not earn space just because it is true, friendly, conventional, or technically available. Ask what concrete business action or decision the element helps the operator complete right now; if the answer is unclear, remove it from primary workflow chrome.
+- **No Ambient Status Or Personalization**: Do not show raw diagnostic identifiers, session labels like "Signed in", personalization text like "Hi, Mark!", or ambient account details in primary workflow chrome. If the app is usable, sign-in state is already implied. Diagnostic details such as UUIDs and request IDs belong in logs or explicit support/debug affordances, not normal operator UI.
+- **Low Cognitive Overhead**: Prefer direct actions, sparse status, and clear task boundaries over friendly decoration, generalized dashboards, or passive information. Each view should contain only the controls, data, and status needed for that specific workflow. Keep technician views focused on the job at hand and rest of day; keep office views focused on schedule, customers, messaging, invoices, and catalog/admin work.
 
 ---
 

@@ -2,6 +2,7 @@
 
 import ipaddress
 from dataclasses import asdict
+from uuid import UUID
 
 from fastapi import APIRouter, Request, Response, Query
 from fastapi.responses import JSONResponse
@@ -28,6 +29,16 @@ from auth.exceptions import (
     UserInactiveError,
 )
 from api.base import success_response, error_response, ErrorCodes
+
+
+# =============================================================================
+# TEMPORARY DEVELOPMENT AUTOBYPASS - REMOVE BEFORE RELEASE.
+# This constant chooses the repo's primary local/test RLS user. The
+# /auth/dev-autobypass route below deliberately creates a session for this user
+# without a magic link so private local frontend work can move quickly.
+# =============================================================================
+DEV_AUTOBYPASS_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+DEV_AUTOBYPASS_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 def create_auth_router(auth_service: AuthService) -> APIRouter:
@@ -134,6 +145,45 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
                     "id": str(result.user.id),
                     "email": result.user.email,
                 }
+            },
+            request_id=_request_id(request),
+        ).model_dump(mode="json")
+
+    @router.post("/dev-autobypass")
+    async def development_autobypass(request: Request, response: Response):
+        # =====================================================================
+        # TEMPORARY DEVELOPMENT AUTOBYPASS - REMOVE BEFORE RELEASE.
+        # Insecure by design: this local-only endpoint mints a real auth session
+        # with no email proof. It is intentionally loud and isolated so it cannot
+        # be mistaken for a supported authentication mode.
+        # =====================================================================
+        client_host = request.client.host if request.client else None
+        if client_host not in DEV_AUTOBYPASS_LOOPBACK_HOSTS:
+            return JSONResponse(
+                status_code=403,
+                content=error_response(
+                    ErrorCodes.AUTHORIZATION_DENIED,
+                    "Development auth bypass is only allowed from loopback",
+                    request_id=_request_id(request),
+                ).model_dump(mode="json"),
+            )
+
+        session = auth_service.create_development_autobypass_session(
+            DEV_AUTOBYPASS_USER_ID
+        )
+        response.set_cookie(
+            key="session_token",
+            value=session.token,
+            httponly=True,
+            secure=False,
+            samesite="lax",
+            max_age=int((session.expires_at - session.created_at).total_seconds()),
+        )
+
+        return success_response(
+            {
+                "user_id": str(session.user_id),
+                "temporary_development_autobypass": True,
             },
             request_id=_request_id(request),
         ).model_dump(mode="json")
