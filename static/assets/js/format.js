@@ -63,16 +63,36 @@ export function customerContact(customer) {
   return [customer.phone, customer.email].filter(Boolean).join(" / ") || "No contact";
 }
 
+export function makePhoneLink(phone) {
+  const a = document.createElement("a");
+  a.href = `tel:${phone.replace(/\D/g, "")}`;
+  a.textContent = phone;
+  return a;
+}
+
+export function makeAddressLink(address) {
+  const line = addressLine(address);
+  const a = document.createElement("a");
+  a.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(line)}`;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = line;
+  return a;
+}
+
 export function addressLine(address) {
   if (!address) {
     return "No address";
   }
-  return address.one_line || [
-    address.label,
+  if (address.one_line) {
+    return address.one_line;
+  }
+  const parts = [
     address.street,
     address.street2,
     address.city,
     address.state,
     address.zip,
-  ].filter(Boolean).join(", ");
+  ].filter((p) => p);
+  return parts.join(", ") || "No address";
 }

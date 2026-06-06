@@ -396,11 +396,14 @@ def _customer_summary(customer) -> dict:
 
 
 def _address_one_line(address) -> str:
-    parts = [address.street]
-    if address.street2:
-        parts.append(address.street2)
-    parts.append(f"{address.city}, {address.state} {address.zip}")
-    return ", ".join(parts)
+    parts = [
+        address.street,
+        address.street2 or "",
+        address.city,
+        address.state,
+        address.zip,
+    ]
+    return ", ".join(p for p in parts if p)
 
 
 def _address_summary(address) -> dict:

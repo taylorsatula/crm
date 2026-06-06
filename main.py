@@ -46,6 +46,15 @@ from core.services.note_service import NoteService
 from core.services.ticket_service import TicketService
 
 
+# TODO: Before production, replace this refinement-mode no-cache policy with
+# fingerprinted frontend assets and long-lived caching for immutable files.
+FRONTEND_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @dataclass
 class AppContainer:
     """Runtime dependencies assembled during application startup."""
@@ -82,6 +91,22 @@ class _ContainerProxy:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._resolver(self._ref.get()), name)
+
+
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(
+        self,
+        full_path: Any,
+        stat_result: Any,
+        scope: dict[str, Any],
+        status_code: int = 200,
+    ) -> FileResponse:
+        return FileResponse(
+            full_path,
+            status_code=status_code,
+            stat_result=stat_result,
+            headers=FRONTEND_NO_CACHE_HEADERS,
+        )
 
 
 def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
@@ -134,7 +159,7 @@ def wire_event_handlers(
 
 def build_app_container() -> AppContainer:
     """Build the production application container from Vault-backed config."""
-    load_dotenv()
+    load_dotenv(override=True)
 
     vault = VaultClient()
 
@@ -247,7 +272,10 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     async def app_shell():
-        return FileResponse(app_config.static_dir / "index.html")
+        return FileResponse(
+            app_config.static_dir / "index.html",
+            headers=FRONTEND_NO_CACHE_HEADERS,
+        )
 
     app.include_router(create_health_router(_health_proxies(container_ref)))
     app.include_router(create_data_router(_service_proxies(container_ref)), prefix="/api")
@@ -267,7 +295,7 @@ def create_app(
 
     app.mount(
         "/assets",
-        StaticFiles(directory=app_config.static_dir),
+        NoCacheStaticFiles(directory=app_config.static_dir / "assets"),
         name="assets",
     )
 

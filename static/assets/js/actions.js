@@ -50,6 +50,9 @@ export const ticketActions = {
   close(id) {
     return api.action("ticket", "close", { id });
   },
+  closeout(id, payload) {
+    return api.action("ticket", "closeout", { id, ...payload });
+  },
 };
 
 export const lineItemActions = {

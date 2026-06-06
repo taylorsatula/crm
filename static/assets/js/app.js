@@ -19,7 +19,6 @@ import {
   renderCustomerRows,
   renderInvoiceDetail,
   renderInvoiceRow,
-  renderJob,
   renderMessageDetail,
   renderMessageRow,
   renderServiceDetail,
@@ -242,8 +241,28 @@ async function loadCustomers() {
   const signal = nextSignal();
   els.customersList.replaceChildren(emptyNode("Loading"));
   try {
-    state.customers = await api.data("customers", { limit: 50 }, { signal });
-    renderCustomerRows(els.customersList, state.customers);
+    const [customers, upcomingTickets] = await Promise.all([
+      api.data("customers", { limit: 50 }, { signal }),
+      api.data("tickets", { filter: "upcoming", limit: 200 }, { signal }),
+    ]);
+    state.customers = customers;
+
+    // Build map: customer_id -> earliest upcoming appointment date
+    const now = new Date();
+    const fifteenDays = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+    const appointmentMap = new Map();
+    upcomingTickets.forEach((row) => {
+      const ticket = row.ticket;
+      const sched = new Date(ticket.scheduled_at);
+      if (sched <= fifteenDays) {
+        const existing = appointmentMap.get(ticket.customer_id);
+        if (!existing || sched < existing) {
+          appointmentMap.set(ticket.customer_id, sched);
+        }
+      }
+    });
+
+    renderCustomerRows(els.customersList, customers, appointmentMap);
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
@@ -400,34 +419,14 @@ function openService(serviceId) {
   setDetailContent(els.catalogDetail, renderServiceDetail(service));
 }
 
-async function renderTodayJob(ticketId) {
-  const packet = await api.control.ticketPacket(ticketId);
-  state.activeTicket = packet;
-  setDetailContent(els.todayDetail, renderJob(packet));
-}
-
 async function runTicketCommand(command, button) {
   const ticketId = button.dataset.ticketId;
   const packet = state.activeTicket && state.activeTicket.ticket.id === ticketId
     ? state.activeTicket
     : await api.control.ticketPacket(ticketId);
 
-  if (command === "update") {
-    workflows.updateAppointment({ packet });
-  } else if (command === "scope") {
-    await workflows.scope({ packet });
-  } else if (command === "message" || command === "followup") {
-    workflows.scheduleMessage({ customer: packet.customer, ticket: packet.ticket });
-  } else if (command === "job") {
-    await setActiveSurface("today", false);
-    setDetailContent(els.todayDetail, renderJob(packet));
-  } else if (command === "closeout") {
-    await setActiveSurface("tickets", false);
-    setDetailContent(els.ticketDetail, renderCloseout(packet));
-  } else if (command === "invoice") {
+  if (command === "invoice") {
     workflows.createInvoice({ packet });
-  } else if (command === "note") {
-    workflows.addNote({ ownerType: "ticket", ownerId: ticketId });
   } else if (command === "removeNote") {
     confirmAction({
       title: "Remove note",
@@ -440,49 +439,32 @@ async function runTicketCommand(command, button) {
         await openTicket(ticketId);
       },
     });
-  } else if (command === "cancel") {
-    confirmAction({
-      title: "Cancel appointment",
-      hostText: `${packet.customer.display_name || "Customer"} - ${dateTime(packet.ticket.scheduled_at)}`,
-      bodyText: "Cancel this appointment?",
-      submitLabel: "Cancel appointment",
-      onConfirm: async () => {
-        await ticketActions.cancel(ticketId);
-        showNotice("Appointment cancelled", false);
-        await openTicket(ticketId);
-        await loadToday(true);
-        await loadTickets(true);
-      },
-    });
-  } else if (command === "delete") {
-    confirmAction({
-      title: "Delete ticket",
-      hostText: `${packet.customer.display_name || "Customer"} - ${dateTime(packet.ticket.scheduled_at)}`,
-      bodyText: "Delete this mistaken ticket? This removes it from normal ticket lists.",
-      submitLabel: "Delete ticket",
-      onConfirm: async () => {
-        await ticketActions.delete(ticketId);
-        showNotice("Ticket deleted", false);
-        setDetailEmpty(els.ticketDetail, "Open a ticket.");
-        await loadToday(true);
-        await loadTickets(true);
-      },
-    });
   } else if (command === "clockIn") {
     const updated = await ticketActions.clockIn(ticketId);
     showNotice(`In progress since ${dateTime(updated.clock_in_at)}`, false);
-    await renderTodayJob(ticketId);
+    await openTicket(ticketId);
     await loadToday(true);
   } else if (command === "clockOut") {
-    const updated = await ticketActions.clockOut(ticketId);
-    showNotice(`Clocked out at ${dateTime(updated.clock_out_at)}`, false);
-    await renderTodayJob(ticketId);
-    await loadToday(true);
-  } else if (command === "close") {
-    await ticketActions.close(ticketId);
-    showNotice("Ticket status changed to Completed", false);
-    await openTicket(ticketId);
-  }
+    setDetailContent(els.ticketDetail, renderCloseout(packet, {
+      packet,
+      onComplete: async (tid, payload) => {
+        await ticketActions.closeout(tid, payload);
+      },
+      onCreateInvoice: async (tid) => {
+        return await invoiceActions.createFromTicket(tid, { tax_rate_bps: 0 });
+      },
+      onRecordPayment: async (invoiceId, amountCents, method) => {
+        return await invoiceActions.recordPayment(invoiceId, amountCents);
+      },
+      onSendInvoice: async (invoiceId) => {
+        return await invoiceActions.send(invoiceId);
+      },
+      onNotice: showNotice,
+      onBookNext: (pkt) => workflows.bookNextFromTicket(pkt),
+      onFollowUp: (pkt) => workflows.scheduleFollowUp(pkt),
+      onDoNotFollowUp: (pkt) => workflows.doNotFollowUp(pkt),
+    }));
+}
 }
 
 async function runCustomerCommand(command, button) {
@@ -704,16 +686,39 @@ els.customerSearchForm.addEventListener("submit", async (event) => {
   const form = new FormData(els.customerSearchForm);
   els.customersList.replaceChildren(emptyNode("Loading"));
   try {
-    const customers = await api.data("customers", {
-      search: form.get("search"),
-      limit: 50,
-    }, { signal });
-    renderCustomerRows(els.customersList, customers);
+    const [customers, upcomingTickets] = await Promise.all([
+      api.data("customers", {
+        search: form.get("search"),
+        limit: 50,
+      }, { signal }),
+      api.data("tickets", { filter: "upcoming", limit: 200 }, { signal }),
+    ]);
+
+    const now = new Date();
+    const fifteenDays = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+    const appointmentMap = new Map();
+    upcomingTickets.forEach((row) => {
+      const ticket = row.ticket;
+      const sched = new Date(ticket.scheduled_at);
+      if (sched <= fifteenDays) {
+        const existing = appointmentMap.get(ticket.customer_id);
+        if (!existing || sched < existing) {
+          appointmentMap.set(ticket.customer_id, sched);
+        }
+      }
+    });
+
+    renderCustomerRows(els.customersList, customers, appointmentMap);
   } catch (error) {
     if (error.name !== "AbortError") {
       showNotice(apiErrorMessage(error), true);
     }
   }
+});
+
+document.addEventListener("open-customer", async (event) => {
+  await setActiveSurface("customers", false);
+  await openCustomer(event.detail);
 });
 
 document.addEventListener("click", async (event) => {
@@ -773,10 +778,6 @@ document.addEventListener("click", async (event) => {
       showAuth("");
       return;
     }
-    if (button.dataset.todayJob) {
-      await renderTodayJob(button.dataset.todayJob);
-      return;
-    }
     if (button.dataset.openCustomer) {
       await setActiveSurface("customers", false);
       await openCustomer(button.dataset.openCustomer);
@@ -830,20 +831,20 @@ document.addEventListener("click", async (event) => {
 });
 
 async function boot() {
+  // Try dev autobypass first — guarantees a fresh session in local dev,
+  // fails silently (403) in production so normal auth flow takes over.
+  try {
+    state.user = await api.auth.devAutobypass();
+    showApp();
+    return;
+  } catch (bypassError) {
+    console.debug("dev-autobypass failed:", bypassError.code);
+  }
+
   try {
     state.user = await api.auth.me();
     showApp();
   } catch (error) {
-    if (error.code === "NOT_AUTHENTICATED" || error.code === "SESSION_EXPIRED") {
-      try {
-        state.user = await api.auth.devAutobypass();
-        showApp();
-      } catch (bypassError) {
-        showAuth("");
-        showNotice(apiErrorMessage(bypassError), true);
-      }
-      return;
-    }
     showAuth(apiErrorMessage(error));
   }
 }

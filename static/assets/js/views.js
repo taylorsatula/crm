@@ -5,51 +5,104 @@ import {
   denseRow,
   emptyNode,
   plainRow,
+  qs,
   renderList,
   setHtml,
   setText,
 } from "./dom.js";
-import { addressLine, customerContact, customerName, dateTime, money } from "./format.js";
+import { addressLine, customerName, dateTime, makeAddressLink, makePhoneLink, money } from "./format.js";
 
 export function renderTodayRows(container, rows) {
-  renderList(container, rows, (packet) => renderTicketPacketRow(packet, {
-    action: "Open job",
-    dataset: { todayJob: packet.ticket.id },
-  }), "No appointments today");
+  renderList(container, rows, renderTicketPacketRow, "No appointments today");
 }
 
 export function renderTicketRows(container, rows) {
   renderList(container, rows, renderTicketPacketRow, "No appointments");
 }
 
-export function renderCustomerRows(container, customers) {
-  renderList(container, customers, (customer) => denseRow({
-    primary: customerName(customer),
-    secondary: customerContact(customer),
-    meta: customer.preferred_contact_method ? `preferred: ${customer.preferred_contact_method}` : "",
-    action: "Open customer",
-    dataset: { openCustomer: customer.id },
-  }), "No customers");
+export function renderCustomerRows(container, customers, appointmentMap) {
+  container.replaceChildren();
+  if (!customers || !customers.length) {
+    const li = document.createElement("li");
+    li.className = "empty-state";
+    li.textContent = "No customers";
+    container.append(li);
+    return;
+  }
+  customers.forEach((customer) => {
+    const li = document.createElement("li");
+    li.className = "customer-row";
+
+    // Name column - clickable to open customer
+    const nameCol = document.createElement("span");
+    nameCol.className = "customer-name";
+    nameCol.textContent = customerName(customer);
+    nameCol.addEventListener("click", () => {
+      document.dispatchEvent(new CustomEvent("open-customer", { detail: customer.id }));
+    });
+
+    // Phone column - tel: link
+    const phoneCol = document.createElement("span");
+    phoneCol.className = "customer-phone";
+    if (customer.phone) {
+      const phoneLink = document.createElement("a");
+      phoneLink.href = `tel:${customer.phone.replace(/\D/g, "")}`;
+      phoneLink.textContent = customer.phone;
+      phoneCol.append(phoneLink);
+    } else {
+      phoneCol.textContent = "";
+    }
+
+    // Address column - Google Maps link
+    const addrCol = document.createElement("span");
+    addrCol.className = "customer-address";
+    if (customer.address) {
+      const addrLink = document.createElement("a");
+      addrLink.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(customer.address)}`;
+      addrLink.target = "_blank";
+      addrLink.textContent = customer.address;
+      addrCol.append(addrLink);
+    } else {
+      addrCol.textContent = "";
+    }
+
+    // Appointment date column
+    const apptCol = document.createElement("span");
+    apptCol.className = "customer-appt";
+    if (appointmentMap && appointmentMap.has(customer.id)) {
+      const apptDate = appointmentMap.get(customer.id);
+      apptCol.textContent = apptDate.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } else {
+      apptCol.textContent = "—";
+    }
+
+    li.append(nameCol, phoneCol, addrCol, apptCol);
+    container.append(li);
+  });
 }
 
 export function renderCustomerDossier(dossier) {
   const view = cloneTemplate("template-customer-dossier");
   const customer = dossier.customer;
   setText(view, "name", customerName(customer));
-  setText(view, "phone", customer.phone);
-  setText(view, "email", customer.email);
+  setHtml(view, "phone", customer.phone ? makePhoneLink(customer.phone) : document.createTextNode("—"));
+  setHtml(view, "email", customer.email ? (() => { const a = document.createElement("a"); a.href = `mailto:${customer.email}`; a.textContent = customer.email; return a; })() : document.createTextNode("—"));
+  const primaryAddr = dossier.addresses.find((a) => a.is_primary) || dossier.addresses[0];
+  setHtml(view, "address", primaryAddr ? makeAddressLink(primaryAddr) : document.createTextNode("—"));
   setText(view, "preferred-contact", customer.preferred_contact_method);
   setText(view, "preferred-time", customer.preferred_time_of_day);
   setHtml(view, "actions", actionBand([
-    actionButton("Book appointment", { customerCommand: "book", customerId: customer.id }, true),
-    actionButton("Schedule message", { customerCommand: "message", customerId: customer.id }),
-    actionButton("Edit contact", { customerCommand: "edit", customerId: customer.id }),
-    actionButton("Add note", { customerCommand: "note", customerId: customer.id }),
-    actionButton("Add attribute", { customerCommand: "attribute", customerId: customer.id }),
-    actionButton("Add address", { customerCommand: "address", customerId: customer.id }),
+    actionButton("Book", { customerCommand: "book", customerId: customer.id }, true),
+    actionButton("Message", { customerCommand: "message", customerId: customer.id }),
+    actionButton("Note", { customerCommand: "note", customerId: customer.id }),
+    actionButton("Edit", { customerCommand: "edit", customerId: customer.id }),
   ]));
 
-  setHtml(view, "addresses", renderAddresses(dossier));
   setHtml(view, "attributes", listFacts(
     dossier.attributes,
     (attr) => `${attr.key}: ${typeof attr.value === "object" ? JSON.stringify(attr.value) : attr.value}`,
@@ -105,17 +158,40 @@ export function renderTicketPacket(packet) {
   setText(view, "price-estimated", ticket.is_price_estimated ? "Yes" : "No");
   setText(view, "clock", packet.clock_state);
   setHtml(view, "actions", actionBand(ticketActions(packet)));
-  setHtml(view, "customer", plainRow([
-    customerName(packet.customer),
-    customerContact(packet.customer),
-    packet.customer.preferred_contact_method ? `Preferred: ${packet.customer.preferred_contact_method}` : "",
-  ], actionBand([
-    actionButton("Open customer", { openCustomer: packet.customer.id }),
-  ])));
-  setHtml(view, "address", plainRow([
-    addressLine(packet.address),
-    packet.address.notes || "",
-  ]));
+  {
+    const custRow = cloneTemplate("template-plain-row");
+    const custContent = qs(custRow, '[data-slot="content"]');
+    custContent.append(document.createTextNode(customerName(packet.customer)));
+    if (packet.customer.phone) {
+      custContent.append(makePhoneLink(packet.customer.phone));
+    }
+    if (packet.customer.email) {
+      const emailLink = document.createElement("a");
+      emailLink.href = `mailto:${packet.customer.email}`;
+      emailLink.textContent = packet.customer.email;
+      custContent.append(emailLink);
+    }
+    if (packet.customer.preferred_contact_method) {
+      const prefSpan = document.createElement("span");
+      prefSpan.textContent = `Preferred: ${packet.customer.preferred_contact_method}`;
+      custContent.append(prefSpan);
+    }
+    setHtml(custRow, "actions", actionBand([
+      actionButton("Open customer", { openCustomer: packet.customer.id }),
+    ]));
+    setHtml(view, "customer", custRow);
+  }
+  {
+    const addrRow = cloneTemplate("template-plain-row");
+    const addrContent = qs(addrRow, '[data-slot="content"]');
+    addrContent.append(makeAddressLink(packet.address));
+    if (packet.address.notes) {
+      const notesSpan = document.createElement("span");
+      notesSpan.textContent = packet.address.notes;
+      addrContent.append(notesSpan);
+    }
+    setHtml(view, "address", addrRow);
+  }
   setHtml(view, "scope", renderLineItems(packet));
   setHtml(view, "notes", renderTicketNotes(packet));
   setHtml(view, "messages", rowList(packet.pending_messages, renderMessageRow, "No pending messages"));
@@ -123,52 +199,121 @@ export function renderTicketPacket(packet) {
   return view;
 }
 
-export function renderJob(packet) {
-  const article = document.createElement("article");
-  article.className = "detail-stack";
-  article.append(
-    sectionWith("Job", [
-      plainRow([
-        `Arrival: ${dateTime(packet.ticket.scheduled_at)}`,
-        `Address: ${addressLine(packet.address)}`,
-        packet.address.notes ? `Access: ${packet.address.notes}` : "",
-        `Customer: ${customerName(packet.customer)} / ${customerContact(packet.customer)}`,
-      ], actionBand([
-        actionButton("Clock in", { ticketCommand: "clockIn", ticketId: packet.ticket.id }, true),
-        actionButton("Clock out", { ticketCommand: "clockOut", ticketId: packet.ticket.id }, true),
-        actionButton("Add job note", { ticketCommand: "note", ticketId: packet.ticket.id }),
-        actionButton("Open ticket", { openTicket: packet.ticket.id }),
-      ])),
-    ]),
-    sectionWith("Scope", [renderLineItems(packet)]),
-    sectionWith("Notes", [renderTicketNotes(packet)])
-  );
-  return article;
+export function renderCloseout(packet, handlers) {
+  const view = cloneTemplate("template-closeout-wizard");
+  const ticket = packet.ticket;
+
+  // Pre-fill duration from actual (clocked out) or scheduled
+  const defaultDuration = ticket.actual_duration_minutes || ticket.scheduled_duration_minutes || 60;
+
+  // Step 1: Summary
+  const summaryEl = qs(view, '[data-slot="summary"]');
+  summaryEl.innerHTML = [
+    `<strong>${customerName(packet.customer)}</strong>`,
+    addressLine(packet.address),
+    `Scope: ${packet.scope_summary}`,
+    `Price: ${money(packet.total_price_cents)}`,
+  ].filter(Boolean).join("<br>");
+
+  // Pre-fill duration input
+  const durationInput = view.querySelector('[name="confirmed_duration_minutes"]');
+  durationInput.value = defaultDuration;
+
+  // Step 1: Complete button
+  const reviewActions = qs(view, '[data-slot="review-actions"]');
+  const completeBtn = actionButton("Complete", {}, true);
+  completeBtn.type = "button";
+  reviewActions.append(actionBand([completeBtn]));
+
+  completeBtn.addEventListener("click", async () => {
+    const duration = parseInt(durationInput.value, 10);
+    if (!duration || duration < 1) {
+      handlers.onNotice("Duration must be at least 1 minute", true);
+      return;
+    }
+    const finalNote = view.querySelector('[name="final_note"]').value.trim() || null;
+
+    completeBtn.disabled = true;
+    try {
+      await handlers.onComplete(ticket.id, { confirmed_duration_minutes: duration, final_note: finalNote });
+      const invoice = await handlers.onCreateInvoice(ticket.id);
+      populatePaymentStep(view, invoice, handlers);
+      qs(view, '[data-step="review"]').classList.add("closeout-step-hidden");
+      qs(view, '[data-step="payment"]').classList.remove("closeout-step-hidden");
+    } catch (error) {
+      handlers.onNotice(`Closeout failed: ${error.message || error}`, true);
+      completeBtn.disabled = false;
+    }
+  });
+
+  return view;
 }
 
-export function renderCloseout(packet) {
-  const article = document.createElement("article");
-  article.className = "detail-stack";
-  article.append(
-    sectionWith("Closeout", [
-      plainRow([
-        `Status: ${packet.ticket.status}`,
-        `Final scope: ${packet.scope_summary}`,
-        `Final price: ${money(packet.total_price_cents)}`,
-        packet.ticket.actual_duration_minutes ? `Actual duration: ${packet.ticket.actual_duration_minutes} minutes` : "",
-      ], actionBand([
-        actionButton("Close job", { ticketCommand: "close", ticketId: packet.ticket.id }, true),
-        packet.line_items.length ? actionButton("Create invoice", { ticketCommand: "invoice", ticketId: packet.ticket.id }) : null,
-        actionButton("Add final note", { ticketCommand: "note", ticketId: packet.ticket.id }),
-        actionButton("Edit scope", { ticketCommand: "scope", ticketId: packet.ticket.id }),
-        actionButton("Schedule follow-up", { ticketCommand: "followup", ticketId: packet.ticket.id }),
-      ])),
-    ]),
-    sectionWith("Final scope", [renderLineItems(packet)]),
-    sectionWith("Job notes", [renderTicketNotes(packet)]),
-    sectionWith("Customer attributes", [plainRow(["Attribute processing: captured or needs review after close"])])
-  );
-  return article;
+function populateDisposition(view, packet, handlers) {
+  const dispositionEl = qs(view, '[data-slot="disposition"]');
+
+  // Book Next
+  const bookNextBtn = actionButton("Book Next", {}, true);
+  bookNextBtn.type = "button";
+  bookNextBtn.addEventListener("click", () => {
+    handlers.onBookNext(packet);
+  });
+  dispositionEl.append(bookNextBtn);
+
+  // Schedule Follow-Up
+  const followUpBtn = actionButton("Schedule Follow-Up", {}, false);
+  followUpBtn.type = "button";
+  followUpBtn.addEventListener("click", () => {
+    handlers.onFollowUp(packet);
+  });
+  dispositionEl.append(followUpBtn);
+
+  // Do Not Follow-Up
+  const noFollowUpBtn = actionButton("Do Not Follow-Up", {}, false);
+  noFollowUpBtn.type = "button";
+  noFollowUpBtn.style.color = "#c00";
+  noFollowUpBtn.addEventListener("click", () => {
+    handlers.onDoNotFollowUp(packet);
+  });
+  dispositionEl.append(noFollowUpBtn);
+}
+
+function populatePaymentStep(view, invoice, handlers) {
+  const invoiceSummary = qs(view, '[data-slot="invoice-summary"]');
+  invoiceSummary.innerHTML = [
+    `<strong>${invoice.invoice_number}</strong>`,
+    `Total: ${money(invoice.total_amount_cents)}`,
+  ].join("<br>");
+
+  const paymentActions = qs(view, '[data-slot="payment-actions"]');
+  const buttons = [
+    { label: "Cash", method: "cash", recordsPayment: true },
+    { label: "Check", method: "check", recordsPayment: true },
+    { label: "Card", method: "card", recordsPayment: true },
+    { label: "Email invoice", method: "email", recordsPayment: false },
+  ];
+
+  buttons.forEach(({ label, method, recordsPayment }) => {
+    const btn = actionButton(label, {}, false);
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        if (recordsPayment) {
+          await handlers.onRecordPayment(invoice.id, invoice.total_amount_cents, method);
+        } else {
+          await handlers.onSendInvoice(invoice.id);
+        }
+        qs(view, '[data-step="payment"]').classList.add("closeout-step-hidden");
+        qs(view, '[data-step="disposition"]').classList.remove("closeout-step-hidden");
+        populateDisposition(view, handlers.packet, handlers);
+      } catch (error) {
+        handlers.onNotice(`Payment failed: ${error.message || error}`, true);
+        btn.disabled = false;
+      }
+    });
+    paymentActions.append(btn);
+  });
 }
 
 export function renderInvoiceRow(invoice) {
@@ -273,57 +418,16 @@ function renderTicketPacketRow(packet, options = {}) {
   });
 }
 
-function renderAddresses(dossier) {
-  const list = document.createElement("div");
-  list.className = "stack-list";
-  const customerId = dossier.customer.id;
-  if (!dossier.addresses.length) {
-    list.append(emptyNode("No addresses"));
-    return list;
-  }
-  dossier.addresses.forEach((address) => {
-    list.append(plainRow([
-      addressLine(address),
-      address.notes || "",
-      address.is_primary ? "Primary" : "",
-    ], actionBand([
-      actionButton("Use for booking", {
-        customerCommand: "bookAddress",
-        customerId,
-        addressId: address.id,
-      }, true),
-      actionButton("Edit", {
-        customerCommand: "editAddress",
-        customerId,
-        addressId: address.id,
-      }),
-      actionButton("Remove", {
-        customerCommand: "removeAddress",
-        customerId,
-        addressId: address.id,
-      }),
-    ])));
-  });
-  return list;
-}
-
 function ticketActions(packet) {
   const ticket = packet.ticket;
   const actions = [
-    actionButton("Update appointment", { ticketCommand: "update", ticketId: ticket.id }, true),
-    actionButton("Add scope", { ticketCommand: "scope", ticketId: ticket.id }),
-    actionButton("Schedule confirmation", { ticketCommand: "message", ticketId: ticket.id }),
-    actionButton("Open job", { ticketCommand: "job", ticketId: ticket.id }),
-    actionButton("Closeout", { ticketCommand: "closeout", ticketId: ticket.id }),
-    actionButton("Add note", { ticketCommand: "note", ticketId: ticket.id }),
+    actionButton("Edit", { ticketCommand: "edit", ticketId: ticket.id }, true),
   ];
-  if (packet.line_items.length) {
-    actions.push(actionButton("Create invoice", { ticketCommand: "invoice", ticketId: ticket.id }));
+  if (packet.clock_state === "in_progress") {
+    actions.push(actionButton("Clock out", { ticketCommand: "clockOut", ticketId: ticket.id }, true));
+  } else if (ticket.status !== "cancelled" && ticket.status !== "completed") {
+    actions.push(actionButton("Clock in", { ticketCommand: "clockIn", ticketId: ticket.id }, true));
   }
-  if (ticket.status !== "cancelled" && ticket.status !== "completed") {
-    actions.push(actionButton("Cancel appointment", { ticketCommand: "cancel", ticketId: ticket.id }));
-  }
-  actions.push(actionButton("Delete mistaken ticket", { ticketCommand: "delete", ticketId: ticket.id }));
   return actions;
 }
 

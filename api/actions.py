@@ -93,7 +93,7 @@ class CustomerHandler:
 
 
 class TicketHandler:
-    ALLOWED_ACTIONS = {"create", "update", "delete", "clock_in", "clock_out", "close", "cancel"}
+    ALLOWED_ACTIONS = {"create", "update", "delete", "clock_in", "clock_out", "close", "closeout", "cancel"}
 
     def __init__(self, service):
         self.service = service
@@ -125,6 +125,14 @@ class TicketHandler:
     def _handle_close(self, data: dict):
         ticket = self.service.close(UUID(data["id"]))
         return ticket.model_dump(mode="json")
+
+    def _handle_closeout(self, data: dict):
+        result = self.service.closeout(
+            ticket_id=UUID(data["id"]),
+            confirmed_duration_minutes=int(data["confirmed_duration_minutes"]),
+            final_note=data.get("final_note"),
+        )
+        return result
 
     def _handle_cancel(self, data: dict):
         ticket = self.service.cancel(UUID(data["id"]))

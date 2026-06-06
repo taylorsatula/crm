@@ -55,8 +55,11 @@ class Address(BaseModel):
     @property
     def one_line(self) -> str:
         """Single-line address for display."""
-        parts = [self.street]
-        if self.street2:
-            parts.append(self.street2)
-        parts.append(f"{self.city}, {self.state} {self.zip}")
-        return ", ".join(parts)
+        parts = [
+            self.street,
+            self.street2 or "",
+            self.city,
+            self.state,
+            self.zip,
+        ]
+        return ", ".join(p for p in parts if p)

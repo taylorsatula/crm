@@ -326,6 +326,67 @@ class TicketService:
 
         return updated
 
+    def closeout(
+        self,
+        ticket_id: UUID,
+        confirmed_duration_minutes: int,
+        final_note: str | None = None,
+    ) -> dict:
+        """
+        Complete closeout flow: confirm duration, optionally add final note, then close.
+
+        Args:
+            ticket_id: Ticket UUID
+            confirmed_duration_minutes: Technician-confirmed actual duration
+            final_note: Optional final job note (persisted against the ticket)
+
+        Returns:
+            Dict with 'ticket' and 'customer_id' for frontend disposition step
+
+        Raises:
+            ValueError: If ticket cannot be closed
+        """
+        current = self.get_by_id(ticket_id)
+        if current is None:
+            raise ValueError(f"Ticket {ticket_id} not found")
+
+        if current.is_closed:
+            raise ValueError(f"Ticket {ticket_id} already closed")
+
+        # Update duration even if not clocked out
+        now = now_utc()
+        self.postgres.execute(
+            """
+            UPDATE tickets
+            SET actual_duration_minutes = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (confirmed_duration_minutes, now, ticket_id),
+        )
+
+        # Create final note on ticket if provided
+        if final_note:
+            from core.services.note_service import NoteService
+            from core.models.note import NoteCreate
+
+            note_svc = NoteService(self.postgres, self.audit, self.event_bus)
+            note_svc.create(
+                NoteCreate(
+                    content=final_note.strip(),
+                    customer_id=None,
+                    ticket_id=ticket_id,
+                )
+            )
+
+        # Close the ticket
+        ticket = self.close(ticket_id)
+
+        return {
+            "ticket": ticket.model_dump(mode="json"),
+            "customer_id": str(current.customer_id),
+            "address_id": str(current.address_id),
+        }
+
     def cancel(self, ticket_id: UUID) -> Ticket:
         """
         Cancel a ticket.

@@ -377,7 +377,7 @@ class TestDataTickets:
         rows = response.json()["data"]
         row = next(item for item in rows if item["ticket"]["id"] == str(sample_ticket.id))
         assert row["customer"]["display_name"] == "Test Customer"
-        assert row["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert row["address"]["one_line"] == "123 Main St, Austin, TX, 78701"
         assert row["scope_summary"] == "No line items"
 
 
@@ -486,7 +486,7 @@ class TestControlSurfaceReadShapes:
         rows = response.json()["data"]
         row = next(item for item in rows if item["ticket"]["id"] == str(ticket.id))
         assert row["customer"]["display_name"] == "Test Customer"
-        assert row["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert row["address"]["one_line"] == "123 Main St, Austin, TX, 78701"
         assert row["line_items"][0]["service_name"] == "Window Cleaning"
         assert row["scope_summary"] == "Window Cleaning"
         assert row["pending_message_count"] == 1
@@ -523,7 +523,7 @@ class TestControlSurfaceReadShapes:
         packet = response.json()["data"]
         assert packet["ticket"]["id"] == str(sample_ticket.id)
         assert packet["customer"]["display_name"] == "Test Customer"
-        assert packet["address"]["one_line"] == "123 Main St, Austin, TX 78701"
+        assert packet["address"]["one_line"] == "123 Main St, Austin, TX, 78701"
         assert packet["line_items"][0]["id"] == str(sample_line_item.id)
         assert packet["notes"][0]["id"] == str(note.id)
         assert packet["pending_messages"][0]["id"] == str(message.id)

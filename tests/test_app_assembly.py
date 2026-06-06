@@ -5,7 +5,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from core.event_bus import EventBus
-from main import create_app, wire_event_handlers
+from main import FRONTEND_NO_CACHE_HEADERS, create_app, wire_event_handlers
 
 
 class FakeService:
@@ -109,13 +109,23 @@ def test_event_bus_subscriptions_are_wired():
 def test_assets_are_public_and_served_from_static():
     factory = RecordingFactory()
     app = create_app(container_factory=factory)
+    client = TestClient(app)
     static_file = Path(__file__).resolve().parents[1] / "static" / "health.txt"
 
     assert static_file.read_text().strip() == "assets-ok"
-    response = TestClient(app).get("/assets/health.txt")
+    response = client.get("/assets/health.txt")
+    conditional_response = client.get(
+        "/assets/health.txt",
+        headers={"If-None-Match": response.headers["etag"]},
+    )
 
     assert response.status_code == 200
     assert response.text.strip() == "assets-ok"
+    for header, value in FRONTEND_NO_CACHE_HEADERS.items():
+        assert response.headers[header] == value
+        assert conditional_response.headers[header] == value
+    assert conditional_response.status_code == 200
+    assert conditional_response.text.strip() == "assets-ok"
 
 
 def test_root_app_shell_is_public_html():
@@ -126,6 +136,8 @@ def test_root_app_shell_is_public_html():
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
+    for header, value in FRONTEND_NO_CACHE_HEADERS.items():
+        assert response.headers[header] == value
     assert '<script type="module" src="/assets/js/app.js"></script>' in response.text
 
 

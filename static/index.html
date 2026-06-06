@@ -11,7 +11,7 @@
 
     <section id="auth-screen" class="auth-screen">
       <form id="login-form" class="cluster field-stack">
-        <header class="surface-header">
+        <header class="layout-header">
           <h1>CRM</h1>
           <p>Enter your email to receive a magic link.</p>
         </header>
@@ -23,8 +23,8 @@
       </form>
     </section>
 
-    <div id="app-screen" class="app-shell" hidden>
-      <nav class="top-nav" aria-label="Primary">
+    <div id="app-screen" class="layout-app" hidden>
+      <nav class="layout-nav" aria-label="Primary">
         <button type="button" data-surface-link="today">Today</button>
         <button type="button" data-surface-link="customers">Customers</button>
         <button type="button" data-surface-link="tickets">Tickets</button>
@@ -33,28 +33,29 @@
         <button type="button" data-surface-link="catalog">Catalog</button>
         <button type="button" data-surface-link="support">Support</button>
       </nav>
-      <main class="surface-stack">
-        <section id="surface-today" class="surface" data-surface="today">
-          <header class="surface-header">
+
+      <main class="layout-surfaces">
+        <section id="surface-today" class="layout-surface" data-surface="today">
+          <header class="layout-header">
             <h1>Today</h1>
             <div class="action-band">
               <button type="button" data-action="refresh">Refresh</button>
               <button type="button" class="primary-button" data-action="book-appointment">Book appointment</button>
             </div>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Schedule</h2>
               <div id="today-list" class="dense-list" data-list="today"></div>
             </section>
-            <section id="today-detail" class="cluster" data-detail="today" data-detail-back-label="Schedule">
-              <p class="empty-state">Open a job from Today.</p>
+            <section id="today-detail" class="layout-detail detail-stack" data-detail="today" data-detail-back-label="Schedule">
+              <p class="empty-state">Open a ticket from Today.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-customers" class="surface" data-surface="customers" hidden>
-          <header class="surface-header">
+        <section id="surface-customers" class="layout-surface" data-surface="customers" hidden>
+          <header class="layout-header">
             <h1>Customers</h1>
             <form id="customer-search-form" class="inline-form">
               <input name="search" placeholder="Name, phone, or email" autocomplete="off">
@@ -62,37 +63,37 @@
               <button type="button" class="primary-button" data-action="new-customer">New customer</button>
             </form>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Results</h2>
-              <div id="customers-list" class="dense-list" data-list="customers"></div>
+              <ul id="customers-list" class="customer-list" data-list="customers"></ul>
             </section>
-            <section id="customer-detail" class="detail-stack" data-detail="customer" data-detail-back-label="Customers">
+            <section id="customer-detail" class="layout-detail detail-stack" data-detail="customer" data-detail-back-label="Customers">
               <p class="empty-state">Search or create a customer.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-tickets" class="surface" data-surface="tickets" hidden>
-          <header class="surface-header">
+        <section id="surface-tickets" class="layout-surface" data-surface="tickets" hidden>
+          <header class="layout-header">
             <h1>Tickets</h1>
             <div class="action-band">
               <button type="button" data-action="refresh">Refresh</button>
             </div>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Tickets</h2>
               <div id="tickets-list" class="dense-list" data-list="tickets"></div>
             </section>
-            <section id="ticket-detail" class="detail-stack" data-detail="ticket" data-detail-back-label="Tickets">
+            <section id="ticket-detail" class="layout-detail detail-stack" data-detail="ticket" data-detail-back-label="Tickets">
               <p class="empty-state">Open a ticket.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-invoices" class="surface" data-surface="invoices" hidden>
-          <header class="surface-header">
+        <section id="surface-invoices" class="layout-surface" data-surface="invoices" hidden>
+          <header class="layout-header">
             <h1>Invoices</h1>
             <div class="action-band" role="group" aria-label="Invoice filters">
               <button type="button" data-invoice-filter="unpaid">Unpaid</button>
@@ -100,19 +101,19 @@
               <button type="button" data-invoice-filter="all">All</button>
             </div>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Queue</h2>
               <div id="invoices-list" class="dense-list" data-list="invoices"></div>
             </section>
-            <section id="invoice-detail" class="detail-stack" data-detail="invoice" data-detail-back-label="Invoices">
+            <section id="invoice-detail" class="layout-detail detail-stack" data-detail="invoice" data-detail-back-label="Invoices">
               <p class="empty-state">Open an invoice.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-messages" class="surface" data-surface="messages" hidden>
-          <header class="surface-header">
+        <section id="surface-messages" class="layout-surface" data-surface="messages" hidden>
+          <header class="layout-header">
             <h1>Messages</h1>
             <div class="action-band" role="group" aria-label="Message filters">
               <button type="button" data-message-filter="due">Due</button>
@@ -122,37 +123,37 @@
               <button type="button" data-message-filter="cancelled">Canceled</button>
             </div>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Queue</h2>
               <div id="messages-list" class="dense-list" data-list="messages"></div>
             </section>
-            <section id="message-detail" class="detail-stack" data-detail="message" data-detail-back-label="Messages">
+            <section id="message-detail" class="layout-detail detail-stack" data-detail="message" data-detail-back-label="Messages">
               <p class="empty-state">Open a message.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-catalog" class="surface" data-surface="catalog" hidden>
-          <header class="surface-header">
+        <section id="surface-catalog" class="layout-surface" data-surface="catalog" hidden>
+          <header class="layout-header">
             <h1>Catalog</h1>
             <div class="action-band">
               <button type="button" class="primary-button" data-action="new-service">New service</button>
             </div>
           </header>
-          <div class="work-area master-detail" data-master-detail data-view-mode="list">
-            <section class="cluster" data-master>
+          <div class="layout-master-detail" data-master-detail data-view-mode="list">
+            <section class="layout-master cluster" data-master>
               <h2>Services</h2>
               <div id="catalog-list" class="dense-list" data-list="catalog"></div>
             </section>
-            <section id="catalog-detail" class="detail-stack" data-detail="catalog" data-detail-back-label="Services">
+            <section id="catalog-detail" class="layout-detail detail-stack" data-detail="catalog" data-detail-back-label="Services">
               <p class="empty-state">Open a service.</p>
             </section>
           </div>
         </section>
 
-        <section id="surface-support" class="surface" data-surface="support" hidden>
-          <header class="surface-header">
+        <section id="surface-support" class="layout-surface" data-surface="support" hidden>
+          <header class="layout-header">
             <h1>Support</h1>
             <div class="action-band">
               <button type="button" class="primary-button" data-action="check-health">Check health</button>
@@ -165,12 +166,12 @@
         </section>
       </main>
 
-      <aside id="patch-host" class="patch-host" aria-live="polite"></aside>
+      <aside id="patch-host" class="layout-patch-host" aria-live="polite"></aside>
     </div>
 
     <template id="template-patch-panel">
       <section class="patch-panel">
-        <header>
+        <header class="cluster-header">
           <h2 data-slot="title"></h2>
           <p data-slot="host"></p>
         </header>
@@ -250,6 +251,38 @@
         <label class="checkbox-line"><input name="is_price_estimated" type="checkbox"> Price estimated</label>
         <label>Office notes<textarea name="notes" rows="3"></textarea></label>
       </section>
+    </template>
+
+    <template id="template-closeout-wizard">
+      <article class="closeout-wizard detail-stack">
+        <!-- Step 1: Review & Confirm -->
+        <section class="cluster closeout-step" data-step="review">
+          <h2>Complete Ticket</h2>
+          <div class="closeout-summary" data-slot="summary"></div>
+          <div class="field-stack">
+            <label>Actual duration (minutes)
+              <input name="confirmed_duration_minutes" type="number" min="1" inputmode="numeric" required>
+            </label>
+            <label>Final note (optional)
+              <textarea name="final_note" rows="3"></textarea>
+            </label>
+          </div>
+          <div class="action-band" data-slot="review-actions"></div>
+        </section>
+
+        <!-- Step 2: Payment -->
+        <section class="cluster closeout-step closeout-step-hidden" data-step="payment">
+          <h2>Payment</h2>
+          <div class="closeout-invoice-summary" data-slot="invoice-summary"></div>
+          <div class="action-band" data-slot="payment-actions"></div>
+        </section>
+
+        <!-- Step 3: Disposition -->
+        <section class="cluster closeout-step closeout-step-hidden" data-step="disposition">
+          <h2>What's next?</h2>
+          <div class="closeout-disposition" data-slot="disposition"></div>
+        </section>
+      </article>
     </template>
 
     <template id="template-scope-line-item-fields">
@@ -347,11 +380,11 @@
           <dl class="fact-grid">
             <div><dt>Phone</dt><dd data-slot="phone"></dd></div>
             <div><dt>Email</dt><dd data-slot="email"></dd></div>
+            <div><dt>Address</dt><dd data-slot="address"></dd></div>
             <div><dt>Preferred contact</dt><dd data-slot="preferred-contact"></dd></div>
             <div><dt>Preferred time</dt><dd data-slot="preferred-time"></dd></div>
           </dl>
         </section>
-        <section class="cluster"><h3>Addresses</h3><div class="stack-list" data-slot="addresses"></div></section>
         <section class="cluster"><h3>Attributes</h3><div class="stack-list" data-slot="attributes"></div></section>
         <section class="cluster"><h3>Notes</h3><div class="stack-list" data-slot="notes"></div></section>
         <section class="cluster"><h3>Recent tickets</h3><div class="dense-list" data-slot="tickets"></div></section>

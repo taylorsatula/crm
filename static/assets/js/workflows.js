@@ -21,7 +21,7 @@ import {
   createScopeLineItemEditor,
   createServiceEditor,
 } from "./editors.js";
-import { addressLine, customerName, dateTime } from "./format.js";
+import { addressLine, customerName, dateInputToIso, dateInputValue, dateTime } from "./format.js";
 
 export function createWorkflows(deps) {
   const {
@@ -297,6 +297,119 @@ export function createWorkflows(deps) {
           }
           clearPatch();
           await loadCatalog(true);
+        }),
+      });
+    },
+
+    bookNextFromTicket(packet) {
+      // Pre-populate appointment from current ticket data
+      const ticket = packet.ticket;
+      const customer = packet.customer;
+      const address = packet.address;
+
+      // Compute suggested date: same time next week (or next business day)
+      const scheduledDate = new Date(ticket.scheduled_at);
+      const nextWeek = new Date(scheduledDate);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      const editor = createAppointmentEditor({ ticket });
+      // Override scheduled_at to next week
+      const scheduledAtInput = editor.node.querySelector('[name="scheduled_at"]');
+      if (scheduledAtInput) {
+        scheduledAtInput.value = dateInputValue(nextWeek.toISOString());
+      }
+
+      openPatch({
+        title: "Book Next",
+        hostText: `${customerName(customer)} - ${addressLine(address)}`,
+        body: editor.node,
+        submitLabel: "Book appointment",
+        onSubmit: submit(async () => {
+          const ticketData = await ticketActions.create({
+            customerId: customer.id,
+            addressId: address.id,
+            appointment: editor.read(),
+          });
+          clearPatch();
+          showNotice("Next appointment booked", false);
+          await setSurface("tickets", true);
+          await openTicket(ticketData.id);
+        }),
+      });
+    },
+
+    scheduleFollowUp(packet) {
+      const ticket = packet.ticket;
+      const customer = packet.customer;
+      const address = packet.address;
+
+      // Default: 11 months from now
+      const defaultDate = new Date();
+      defaultDate.setMonth(defaultDate.getMonth() + 11);
+
+      const editor = createAppointmentEditor({ ticket });
+      const scheduledAtInput = editor.node.querySelector('[name="scheduled_at"]');
+      if (scheduledAtInput) {
+        scheduledAtInput.value = dateInputValue(defaultDate.toISOString());
+      }
+
+      openPatch({
+        title: "Schedule Follow-Up",
+        hostText: `${customerName(customer)} - ${addressLine(address)}`,
+        body: editor.node,
+        submitLabel: "Schedule follow-up",
+        onSubmit: submit(async () => {
+          const ticketData = await ticketActions.create({
+            customerId: customer.id,
+            addressId: address.id,
+            appointment: editor.read(),
+          });
+          clearPatch();
+          showNotice("Follow-up scheduled", false);
+          await setSurface("tickets", true);
+          await openTicket(ticketData.id);
+        }),
+      });
+    },
+
+    doNotFollowUp(packet) {
+      const customer = packet.customer;
+
+      openPatch({
+        title: "Do Not Follow-Up",
+        hostText: `${customerName(customer)}`,
+        body: (() => {
+          const section = document.createElement("section");
+          section.className = "field-stack";
+          section.innerHTML = `
+            <p>Record a reason for not following up with this customer. This will be saved to their file.</p>
+            <label>Reason <textarea name="reason" rows="4" required></textarea></label>
+          `;
+          return section;
+        })(),
+        submitLabel: "Save & dismiss",
+        onSubmit: submit(async () => {
+          const reasonInput = document.querySelector('#patch-host [name="reason"]');
+          const reason = reasonInput ? reasonInput.value.trim() : "";
+          if (!reason) {
+            showNotice("Reason is required", true);
+            return;
+          }
+
+          // Persist as customer attribute
+          await attributeActions.createManual(customer.id, {
+            key: "do_not_follow_up",
+            value: {
+              reason: reason,
+              noted_at: new Date().toISOString(),
+            },
+          });
+
+          // Also add as a customer note for human readability
+          await noteActions.createForCustomer(customer.id, `[Do Not Follow-Up] ${reason}`);
+
+          clearPatch();
+          showNotice("Do-not-follow-up recorded", false);
         }),
       });
     },
