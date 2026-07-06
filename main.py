@@ -15,6 +15,7 @@ from api.data import create_data_router
 from api.errors import register_error_handlers
 from api.health import create_health_router
 from api.middleware import RequestIDMiddleware
+from auth.access_tokens import AccessTokenManager
 from auth.api import create_auth_router
 from auth.config import AuthConfig
 from auth.database import AuthDatabase
@@ -67,6 +68,7 @@ class AppContainer:
     health_checks: dict[str, Any]
     auth_service: AuthService
     session_manager: SessionManager
+    access_token_manager: AccessTokenManager
 
     def close(self) -> None:
         """Close external client connections owned by the app."""
@@ -178,6 +180,7 @@ def build_app_container() -> AppContainer:
 
     auth_config = AuthConfig()
     auth_db = AuthDatabase(postgres)
+    access_token_manager = AccessTokenManager(postgres)
     session_manager = SessionManager(valkey, auth_config)
     rate_limiter = RateLimiter(valkey, auth_config)
     security_logger = SecurityLogger(postgres)
@@ -220,6 +223,7 @@ def build_app_container() -> AppContainer:
         auth_components={
             "config": auth_config,
             "database": auth_db,
+            "access_token_manager": access_token_manager,
             "session_manager": session_manager,
             "rate_limiter": rate_limiter,
             "security_logger": security_logger,
@@ -230,6 +234,7 @@ def build_app_container() -> AppContainer:
         health_checks=clients,
         auth_service=auth_service,
         session_manager=session_manager,
+        access_token_manager=access_token_manager,
     )
 
 
@@ -288,6 +293,7 @@ def create_app(
     app.add_middleware(
         AuthMiddleware,
         session_manager=_ContainerProxy(container_ref, lambda c: c.session_manager),
+        access_token_manager=_ContainerProxy(container_ref, lambda c: c.access_token_manager),
     )
     app.add_middleware(RequestIDMiddleware)
 

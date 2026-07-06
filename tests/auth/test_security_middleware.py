@@ -7,10 +7,11 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from auth.access_tokens import AccessTokenManager
 from auth.security_middleware import AuthMiddleware
 from auth.session import SessionManager
-from auth.types import Session
-from auth.exceptions import SessionExpiredError
+from auth.types import AccessTokenPrincipal, Session
+from auth.exceptions import InvalidTokenError, SessionExpiredError
 from utils.timezone import now_utc
 
 
@@ -21,13 +22,20 @@ def mock_session_manager():
 
 
 @pytest.fixture
-def app_with_middleware(mock_session_manager):
+def mock_access_token_manager():
+    """Mock AccessTokenManager."""
+    return Mock(spec=AccessTokenManager)
+
+
+@pytest.fixture
+def app_with_middleware(mock_session_manager, mock_access_token_manager):
     """FastAPI app with auth middleware."""
     app = FastAPI()
 
     app.add_middleware(
         AuthMiddleware,
         session_manager=mock_session_manager,
+        access_token_manager=mock_access_token_manager,
     )
 
     @app.get("/")
@@ -36,7 +44,17 @@ def app_with_middleware(mock_session_manager):
 
     @app.get("/api/data/protected")
     async def protected_route(request: Request):
-        return {"user_id": str(request.state.user_id)}
+        return {
+            "user_id": str(request.state.user_id),
+            "auth_method": getattr(request.state, "auth_method", None),
+        }
+
+    @app.post("/api/actions")
+    async def protected_action(request: Request):
+        return {
+            "user_id": str(request.state.user_id),
+            "auth_method": getattr(request.state, "auth_method", None),
+        }
 
     @app.get("/auth/request-link")
     async def public_request_link():
@@ -213,6 +231,126 @@ class TestProtectedPaths:
         mock_session_manager.validate_session.assert_called_once_with("the-token-value")
 
 
+class TestBearerAccessTokens:
+    """Test bearer-token authentication and coarse scopes."""
+
+    def test_valid_bearer_token_sets_user_context(
+        self, app_with_middleware, mock_access_token_manager, test_user_id
+    ):
+        token_id = "11111111-1111-1111-1111-111111111111"
+        mock_access_token_manager.validate_token.return_value = AccessTokenPrincipal(
+            token_id=token_id,
+            user_id=test_user_id,
+            scopes={"read"},
+        )
+        client = TestClient(app_with_middleware)
+
+        response = client.get(
+            "/api/data/protected",
+            headers={"Authorization": "Bearer crm_pat_prefix_secret"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["user_id"] == str(test_user_id)
+        assert response.json()["auth_method"] == "access_token"
+        mock_access_token_manager.validate_token.assert_called_once_with(
+            "crm_pat_prefix_secret"
+        )
+
+    def test_invalid_bearer_token_returns_invalid_token(
+        self, app_with_middleware, mock_access_token_manager
+    ):
+        mock_access_token_manager.validate_token.side_effect = InvalidTokenError("bad")
+        client = TestClient(app_with_middleware)
+
+        response = client.get(
+            "/api/data/protected",
+            headers={"Authorization": "Bearer bad-token"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "INVALID_TOKEN"
+
+    def test_invalid_bearer_token_does_not_fall_back_to_cookie(
+        self, app_with_middleware, mock_access_token_manager, mock_session_manager, test_user_id
+    ):
+        now = now_utc()
+        mock_access_token_manager.validate_token.side_effect = InvalidTokenError("bad")
+        mock_session_manager.validate_session.return_value = Session(
+            token="valid-cookie",
+            user_id=test_user_id,
+            created_at=now,
+            expires_at=now + timedelta(hours=1),
+            last_activity_at=now,
+        )
+        client = TestClient(app_with_middleware)
+
+        response = client.get(
+            "/api/data/protected",
+            headers={"Authorization": "Bearer bad-token"},
+            cookies={"session_token": "valid-cookie"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "INVALID_TOKEN"
+        mock_session_manager.validate_session.assert_not_called()
+
+    def test_read_token_cannot_call_actions(
+        self, app_with_middleware, mock_access_token_manager, test_user_id
+    ):
+        mock_access_token_manager.validate_token.return_value = AccessTokenPrincipal(
+            token_id="11111111-1111-1111-1111-111111111111",
+            user_id=test_user_id,
+            scopes={"read"},
+        )
+        client = TestClient(app_with_middleware)
+
+        response = client.post(
+            "/api/actions",
+            headers={"Authorization": "Bearer crm_pat_prefix_secret"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+
+    def test_write_token_can_call_actions(
+        self, app_with_middleware, mock_access_token_manager, test_user_id
+    ):
+        mock_access_token_manager.validate_token.return_value = AccessTokenPrincipal(
+            token_id="11111111-1111-1111-1111-111111111111",
+            user_id=test_user_id,
+            scopes={"write"},
+        )
+        client = TestClient(app_with_middleware)
+
+        response = client.post(
+            "/api/actions",
+            headers={"Authorization": "Bearer crm_pat_prefix_secret"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["user_id"] == str(test_user_id)
+        assert response.json()["auth_method"] == "access_token"
+
+    def test_write_token_cannot_read_data(
+        self, app_with_middleware, mock_access_token_manager, test_user_id
+    ):
+        mock_access_token_manager.validate_token.return_value = AccessTokenPrincipal(
+            token_id="11111111-1111-1111-1111-111111111111",
+            user_id=test_user_id,
+            scopes={"write"},
+        )
+        client = TestClient(app_with_middleware)
+
+        response = client.get(
+            "/api/data/protected",
+            headers={"Authorization": "Bearer crm_pat_prefix_secret"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "AUTHORIZATION_DENIED"
+
+
 class TestUserContext:
     """Test user context lifecycle."""
 
@@ -271,5 +409,7 @@ class TestCookieName:
         assert response_wrong.status_code == 401
 
         # Correct cookie name should work
-        response_right = client.get("/api/data/protected", cookies={"session_token": "correct-token"})
+        response_right = client.get(
+            "/api/data/protected", cookies={"session_token": "correct-token"}
+        )
         assert response_right.status_code == 200

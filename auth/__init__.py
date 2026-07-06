@@ -15,8 +15,12 @@ from auth.types import (
     MagicLinkRequest,
     MagicLinkToken,
     AuthenticatedUser,
+    AccessToken,
+    CreatedAccessToken,
+    AccessTokenPrincipal,
 )
 from auth.config import AuthConfig
+from auth.access_tokens import AccessTokenManager
 from auth.database import AuthDatabase
 from auth.rate_limiter import RateLimiter
 from auth.security_logger import SecurityLogger, SecurityEvent

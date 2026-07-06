@@ -50,3 +50,33 @@ class AuthenticatedUser(BaseModel):
 
     user: User
     session: Session
+
+
+class AccessToken(BaseModel):
+    """A persisted personal access token record."""
+
+    id: UUID
+    user_id: UUID
+    name: str
+    token_prefix: str
+    token_hash: str
+    scopes: set[str] = Field(..., description="Coarse permissions granted to the token")
+    created_at: datetime
+    expires_at: datetime
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class CreatedAccessToken(BaseModel):
+    """A newly-created access token. Raw token is shown once."""
+
+    token: str = Field(..., description="Raw bearer token; store it immediately")
+    access_token: AccessToken
+
+
+class AccessTokenPrincipal(BaseModel):
+    """Authenticated principal derived from a bearer access token."""
+
+    token_id: UUID
+    user_id: UUID
+    scopes: set[str]

@@ -17,10 +17,16 @@ class FakeSessionManager:
         raise AssertionError("no authenticated routes are exercised in this test")
 
 
+class FakeAccessTokenManager:
+    def validate_token(self, token: str):
+        raise AssertionError("no authenticated routes are exercised in this test")
+
+
 class FakeContainer:
     def __init__(self):
         self.closed = False
         self.session_manager = FakeSessionManager()
+        self.access_token_manager = FakeAccessTokenManager()
         self.event_bus = EventBus()
         self.health_checks = {
             "database": FakeService(),
@@ -41,7 +47,10 @@ class FakeContainer:
             "address": FakeService(),
         }
         self.auth_service = FakeService()
-        self.auth_components = {"session_manager": self.session_manager}
+        self.auth_components = {
+            "session_manager": self.session_manager,
+            "access_token_manager": self.access_token_manager,
+        }
         self.clients = {}
         self.event_handlers = {}
 

@@ -114,6 +114,34 @@ CREATE INDEX idx_magic_link_tokens_user ON magic_link_tokens(user_id);
 
 
 -- -----------------------------------------------------------------------------
+-- access_tokens
+-- -----------------------------------------------------------------------------
+-- Long-lived API credentials. NO RLS - validated during auth before context exists.
+-- Stores only lookup metadata and a hash of the full token, never the raw token.
+-- -----------------------------------------------------------------------------
+CREATE TABLE access_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    scopes TEXT[] NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    CONSTRAINT access_tokens_name_not_blank CHECK (btrim(name) <> ''),
+    CONSTRAINT access_tokens_valid_scopes CHECK (scopes <@ ARRAY['read', 'write', 'admin']::TEXT[]),
+    CONSTRAINT access_tokens_nonempty_scopes CHECK (cardinality(scopes) > 0),
+    CONSTRAINT access_tokens_expires_after_created CHECK (expires_at > created_at)
+);
+
+CREATE INDEX idx_access_tokens_user ON access_tokens(user_id);
+CREATE UNIQUE INDEX idx_access_tokens_prefix ON access_tokens(token_prefix);
+CREATE INDEX idx_access_tokens_active ON access_tokens(user_id, expires_at) WHERE revoked_at IS NULL;
+
+
+-- -----------------------------------------------------------------------------
 -- security_events
 -- -----------------------------------------------------------------------------
 -- Append-only auth audit log. NO RLS.
@@ -403,8 +431,9 @@ CREATE TABLE line_items (
     description TEXT,             -- Override service name if needed
     quantity INT NOT NULL DEFAULT 1,
     unit_price_cents INT,         -- Price per unit in cents
-    total_price_cents INT NOT NULL, -- Total in cents ($10.00 = 1000)
+    total_price_cents INT,         -- Total in cents ($10.00 = 1000); NULL for flexible-price services
     duration_minutes INT,
+    notes TEXT,                    -- Per-line-item notes
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
