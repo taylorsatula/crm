@@ -18,12 +18,12 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def sample_customer(as_test_user, customer_service):
+def sample_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(first_name="Test", last_name="Customer"))
 
 
 @pytest.fixture
-def sample_address(as_test_user, address_service, sample_customer):
+def sample_address(as_test_workspace, address_service, sample_customer):
     return address_service.create(AddressCreate(
         customer_id=sample_customer.id,
         street="123 Main St",
@@ -34,7 +34,7 @@ def sample_address(as_test_user, address_service, sample_customer):
 
 
 @pytest.fixture
-def sample_ticket(as_test_user, ticket_service, sample_customer, sample_address):
+def sample_ticket(as_test_workspace, ticket_service, sample_customer, sample_address):
     return ticket_service.create(TicketCreate(
         customer_id=sample_customer.id,
         address_id=sample_address.id,
@@ -43,7 +43,7 @@ def sample_ticket(as_test_user, ticket_service, sample_customer, sample_address)
 
 
 @pytest.fixture
-def sample_service(as_test_user, catalog_service):
+def sample_service(as_test_workspace, catalog_service):
     return catalog_service.create(ServiceCreate(
         name="Window Cleaning",
         pricing_type=PricingType.FIXED,
@@ -52,7 +52,7 @@ def sample_service(as_test_user, catalog_service):
 
 
 @pytest.fixture
-def sample_line_item(as_test_user, line_item_service, sample_ticket, sample_service):
+def sample_line_item(as_test_workspace, line_item_service, sample_ticket, sample_service):
     return line_item_service.create(
         sample_ticket.id,
         LineItemCreate(service_id=sample_service.id),
@@ -60,7 +60,7 @@ def sample_line_item(as_test_user, line_item_service, sample_ticket, sample_serv
 
 
 @pytest.fixture
-def sample_note(as_test_user, note_service, sample_customer):
+def sample_note(as_test_workspace, note_service, sample_customer):
     return note_service.create(NoteCreate(
         customer_id=sample_customer.id,
         content="Test note content",
@@ -68,7 +68,7 @@ def sample_note(as_test_user, note_service, sample_customer):
 
 
 @pytest.fixture
-def sample_message(as_test_user, message_service, sample_customer):
+def sample_message(as_test_workspace, message_service, sample_customer):
     return message_service.schedule(ScheduledMessageCreate(
         customer_id=sample_customer.id,
         message_type=MessageType.CUSTOM,
@@ -79,7 +79,7 @@ def sample_message(as_test_user, message_service, sample_customer):
 
 
 @pytest.fixture
-def sample_attribute(as_test_user, attribute_service, sample_customer):
+def sample_attribute(as_test_workspace, attribute_service, sample_customer):
     return attribute_service.create(AttributeCreate(
         customer_id=sample_customer.id,
         key="gate_code",
@@ -104,7 +104,7 @@ class TestDataAuthentication:
         assert body["error"]["code"] == "NOT_AUTHENTICATED"
         assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
-    def test_authenticated_succeeds(self, client, as_test_user):
+    def test_authenticated_succeeds(self, client, as_test_workspace):
         response = client.get("/api/data", params={"type": "customers"})
 
         assert response.status_code == 200
@@ -120,7 +120,7 @@ class TestDataAuthentication:
 
 class TestDataValidation:
 
-    def test_missing_type_returns_400(self, client, as_test_user):
+    def test_missing_type_returns_400(self, client, as_test_workspace):
         response = client.get("/api/data")
 
         assert response.status_code == 400
@@ -130,7 +130,7 @@ class TestDataValidation:
         assert "type" in body["error"]["message"].lower()
         assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
 
-    def test_unknown_type_returns_400(self, client, as_test_user):
+    def test_unknown_type_returns_400(self, client, as_test_workspace):
         response = client.get("/api/data", params={"type": "unicorns"})
 
         assert response.status_code == 400
@@ -168,7 +168,7 @@ class TestDataCustomers:
         assert body["data"]["id"] == str(sample_customer.id)
         assert body["data"]["first_name"] == "Test"
 
-    def test_get_nonexistent_customer_returns_404(self, client, as_test_user):
+    def test_get_nonexistent_customer_returns_404(self, client, as_test_workspace):
         fake_id = str(uuid4())
         response = client.get("/api/data", params={
             "type": "customers",
@@ -198,7 +198,7 @@ class TestDataCustomers:
         assert response.status_code == 200
         assert response.json()["data"] == []
 
-    def test_list_customers_respects_limit(self, client, as_test_user, customer_service):
+    def test_list_customers_respects_limit(self, client, as_test_workspace, customer_service):
         for i in range(5):
             customer_service.create(CustomerCreate(first_name=f"Cust{i}"))
 
@@ -228,7 +228,7 @@ class TestDataCustomers:
     def test_include_customer_activity(
         self,
         client,
-        as_test_user,
+        as_test_workspace,
         sample_customer,
         sample_ticket,
         sample_note,
@@ -287,7 +287,7 @@ class TestDataTickets:
         assert data["id"] == str(sample_ticket.id)
         assert data["status"] == "scheduled"
 
-    def test_get_nonexistent_ticket_returns_404(self, client, as_test_user):
+    def test_get_nonexistent_ticket_returns_404(self, client, as_test_workspace):
         response = client.get("/api/data", params={
             "type": "tickets",
             "id": str(uuid4()),
@@ -310,7 +310,7 @@ class TestDataTickets:
         assert data["line_items"][0]["id"] == str(sample_line_item.id)
         assert data["line_items"][0]["total_price_cents"] == 5000
 
-    def test_include_notes(self, client, as_test_user, sample_ticket, note_service):
+    def test_include_notes(self, client, as_test_workspace, sample_ticket, note_service):
         note = note_service.create(NoteCreate(
             ticket_id=sample_ticket.id,
             content="Ticket note here",
@@ -330,7 +330,7 @@ class TestDataTickets:
         assert len(data["notes"]) == 1
         assert data["notes"][0]["content"] == "Ticket note here"
 
-    def test_include_multiple(self, client, as_test_user, sample_ticket, sample_line_item, note_service):
+    def test_include_multiple(self, client, as_test_workspace, sample_ticket, sample_line_item, note_service):
         note_service.create(NoteCreate(
             ticket_id=sample_ticket.id,
             content="Multi-include note",
@@ -347,7 +347,7 @@ class TestDataTickets:
         assert len(data["line_items"]) == 1
         assert len(data["notes"]) == 1
 
-    def test_include_pending_messages(self, client, as_test_user, sample_ticket, sample_customer, message_service):
+    def test_include_pending_messages(self, client, as_test_workspace, sample_ticket, sample_customer, message_service):
         message = message_service.schedule(ScheduledMessageCreate(
             customer_id=sample_customer.id,
             ticket_id=sample_ticket.id,
@@ -388,7 +388,7 @@ class TestDataTickets:
 
 class TestTicketsToday:
 
-    def test_returns_todays_tickets(self, client, as_test_user, ticket_service, sample_customer, sample_address):
+    def test_returns_todays_tickets(self, client, as_test_workspace, ticket_service, sample_customer, sample_address):
         today_at_10 = datetime.combine(
             now_utc().date(), time(10, 0), tzinfo=timezone.utc
         )
@@ -406,7 +406,7 @@ class TestTicketsToday:
         ids = [t["id"] for t in data]
         assert str(created.id) in ids
 
-    def test_excludes_tomorrows_tickets(self, client, as_test_user, ticket_service, sample_customer, sample_address):
+    def test_excludes_tomorrows_tickets(self, client, as_test_workspace, ticket_service, sample_customer, sample_address):
         tomorrow = now_utc() + timedelta(days=1)
         ticket_service.create(TicketCreate(
             customer_id=sample_customer.id,
@@ -422,7 +422,7 @@ class TestTicketsToday:
 
 class TestTicketsCurrent:
 
-    def test_returns_in_progress_ticket(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_returns_in_progress_ticket(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
 
         response = client.get("/api/data/tickets/current")
@@ -432,7 +432,7 @@ class TestTicketsCurrent:
         assert data["id"] == str(sample_ticket.id)
         assert data["status"] == "in_progress"
 
-    def test_returns_null_after_clock_out(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_returns_null_after_clock_out(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
 
@@ -441,7 +441,7 @@ class TestTicketsCurrent:
         assert response.status_code == 200
         assert response.json()["data"] is None
 
-    def test_returns_null_when_none_in_progress(self, client, as_test_user):
+    def test_returns_null_when_none_in_progress(self, client, as_test_workspace):
         response = client.get("/api/data/tickets/current")
 
         assert response.status_code == 200
@@ -453,7 +453,7 @@ class TestControlSurfaceReadShapes:
     def test_today_returns_dense_operator_rows(
         self,
         client,
-        as_test_user,
+        as_test_workspace,
         ticket_service,
         line_item_service,
         message_service,
@@ -496,7 +496,7 @@ class TestControlSurfaceReadShapes:
     def test_ticket_packet_returns_operational_context(
         self,
         client,
-        as_test_user,
+        as_test_workspace,
         sample_ticket,
         sample_line_item,
         sample_customer,
@@ -532,7 +532,7 @@ class TestControlSurfaceReadShapes:
     def test_customer_dossier_returns_knowledge_clusters(
         self,
         client,
-        as_test_user,
+        as_test_workspace,
         sample_customer,
         sample_address,
         sample_ticket,
@@ -594,7 +594,7 @@ class TestDataServices:
 
 class TestDataInvoices:
 
-    def test_list_unpaid_invoices(self, client, as_test_user, invoice_service, sample_ticket, sample_line_item):
+    def test_list_unpaid_invoices(self, client, as_test_workspace, invoice_service, sample_ticket, sample_line_item):
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
         invoice_service.send(invoice.id)
 
@@ -610,7 +610,7 @@ class TestDataInvoices:
         assert data[0]["status"] == "sent"
         assert data[0]["total_amount_cents"] == 5000
 
-    def test_get_invoice_by_id(self, client, as_test_user, invoice_service, sample_ticket, sample_line_item):
+    def test_get_invoice_by_id(self, client, as_test_workspace, invoice_service, sample_ticket, sample_line_item):
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
 
         response = client.get("/api/data", params={
@@ -622,7 +622,7 @@ class TestDataInvoices:
         assert response.json()["data"]["id"] == str(invoice.id)
 
     def test_list_invoices_for_customer(
-        self, client, as_test_user, invoice_service, sample_customer, sample_ticket, sample_line_item
+        self, client, as_test_workspace, invoice_service, sample_customer, sample_ticket, sample_line_item
     ):
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
 
@@ -663,7 +663,7 @@ class TestDataMessages:
         assert data[0]["id"] == str(sample_message.id)
 
     def test_list_pending_messages_for_ticket(
-        self, client, as_test_user, message_service, sample_customer, sample_ticket
+        self, client, as_test_workspace, message_service, sample_customer, sample_ticket
     ):
         message = message_service.schedule(ScheduledMessageCreate(
             customer_id=sample_customer.id,
@@ -735,7 +735,7 @@ class TestDataAttributes:
 
 class TestResponseFormat:
 
-    def test_success_has_all_fields(self, client, as_test_user):
+    def test_success_has_all_fields(self, client, as_test_workspace):
         response = client.get("/api/data", params={"type": "customers"})
 
         body = response.json()
@@ -745,7 +745,7 @@ class TestResponseFormat:
         assert "timestamp" in body["meta"]
         assert "request_id" in body["meta"]
 
-    def test_error_has_all_fields(self, client, as_test_user):
+    def test_error_has_all_fields(self, client, as_test_workspace):
         response = client.get("/api/data", params={
             "type": "customers",
             "id": str(uuid4()),

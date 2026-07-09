@@ -18,12 +18,12 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def sample_customer(as_test_user, customer_service):
+def sample_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(first_name="ActionTest", last_name="User"))
 
 
 @pytest.fixture
-def sample_address(as_test_user, address_service, sample_customer):
+def sample_address(as_test_workspace, address_service, sample_customer):
     return address_service.create(AddressCreate(
         customer_id=sample_customer.id,
         street="456 Oak Ave",
@@ -34,7 +34,7 @@ def sample_address(as_test_user, address_service, sample_customer):
 
 
 @pytest.fixture
-def sample_service(as_test_user, catalog_service):
+def sample_service(as_test_workspace, catalog_service):
     return catalog_service.create(ServiceCreate(
         name="Gutter Cleaning",
         pricing_type=PricingType.FIXED,
@@ -43,7 +43,7 @@ def sample_service(as_test_user, catalog_service):
 
 
 @pytest.fixture
-def sample_ticket(as_test_user, ticket_service, sample_customer, sample_address):
+def sample_ticket(as_test_workspace, ticket_service, sample_customer, sample_address):
     return ticket_service.create(TicketCreate(
         customer_id=sample_customer.id,
         address_id=sample_address.id,
@@ -74,7 +74,7 @@ class TestActionsAuthentication:
 
 class TestActionsValidation:
 
-    def test_missing_domain_returns_422(self, client, as_test_user):
+    def test_missing_domain_returns_422(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "action": "create",
             "data": {},
@@ -83,7 +83,7 @@ class TestActionsValidation:
         assert response.status_code == 422
         assert response.json()["meta"]["request_id"] == response.headers["X-Request-ID"]
 
-    def test_missing_action_returns_422(self, client, as_test_user):
+    def test_missing_action_returns_422(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "data": {},
@@ -91,7 +91,7 @@ class TestActionsValidation:
 
         assert response.status_code == 422
 
-    def test_unknown_domain_returns_400(self, client, as_test_user):
+    def test_unknown_domain_returns_400(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "spaceship",
             "action": "launch",
@@ -103,7 +103,7 @@ class TestActionsValidation:
         assert body["error"]["code"] == "INVALID_REQUEST"
         assert "spaceship" in body["error"]["message"]
 
-    def test_disallowed_action_returns_400(self, client, as_test_user):
+    def test_disallowed_action_returns_400(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "hack",
@@ -123,7 +123,7 @@ class TestActionsValidation:
 
 class TestCustomerActions:
 
-    def test_create_customer(self, client, as_test_user):
+    def test_create_customer(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "create",
@@ -148,7 +148,7 @@ class TestCustomerActions:
         assert response.json()["data"]["first_name"] == "Updated"
         assert response.json()["data"]["id"] == str(sample_customer.id)
 
-    def test_update_nonexistent_returns_404(self, client, as_test_user):
+    def test_update_nonexistent_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "update",
@@ -168,7 +168,7 @@ class TestCustomerActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_customer_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_customer_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "delete",
@@ -215,7 +215,7 @@ class TestTicketActions:
         assert response.json()["data"]["status"] == "in_progress"
         assert response.json()["data"]["clock_in_at"] is not None
 
-    def test_clock_in_already_clocked_returns_400(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_clock_in_already_clocked_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
 
         response = client.post("/api/actions", json={
@@ -227,7 +227,7 @@ class TestTicketActions:
         assert response.status_code == 400
         assert "already clocked in" in response.json()["error"]["message"]
 
-    def test_clock_out(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_clock_out(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
 
         response = client.post("/api/actions", json={
@@ -249,7 +249,7 @@ class TestTicketActions:
         assert response.status_code == 400
         assert "not clocked in" in response.json()["error"]["message"]
 
-    def test_close(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_close(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
 
@@ -263,7 +263,7 @@ class TestTicketActions:
         assert response.json()["data"]["status"] == "completed"
         assert response.json()["data"]["closed_at"] is not None
 
-    def test_close_already_closed_returns_400(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_close_already_closed_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
         ticket_service.close(sample_ticket.id)
@@ -287,7 +287,7 @@ class TestTicketActions:
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "cancelled"
 
-    def test_cancel_completed_returns_400(self, client, as_test_user, ticket_service, sample_ticket):
+    def test_cancel_completed_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
         ticket_service.close(sample_ticket.id)
@@ -311,7 +311,7 @@ class TestTicketActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_ticket_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_ticket_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "ticket",
             "action": "delete",
@@ -328,7 +328,7 @@ class TestTicketActions:
 
 class TestInvoiceActions:
 
-    def test_create_from_ticket(self, client, as_test_user, line_item_service, sample_ticket, sample_service):
+    def test_create_from_ticket(self, client, as_test_workspace, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
 
         response = client.post("/api/actions", json={
@@ -352,7 +352,7 @@ class TestInvoiceActions:
         assert response.status_code == 400
         assert "no line items" in response.json()["error"]["message"]
 
-    def test_send_invoice(self, client, as_test_user, invoice_service, line_item_service, sample_ticket, sample_service):
+    def test_send_invoice(self, client, as_test_workspace, invoice_service, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
 
@@ -366,7 +366,7 @@ class TestInvoiceActions:
         assert response.json()["data"]["status"] == "sent"
         assert response.json()["data"]["sent_at"] is not None
 
-    def test_void_invoice(self, client, as_test_user, invoice_service, line_item_service, sample_ticket, sample_service):
+    def test_void_invoice(self, client, as_test_workspace, invoice_service, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
 
@@ -379,7 +379,7 @@ class TestInvoiceActions:
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "void"
 
-    def test_record_payment(self, client, as_test_user, invoice_service, line_item_service, sample_ticket, sample_service):
+    def test_record_payment(self, client, as_test_workspace, invoice_service, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
         invoice_service.send(invoice.id)
@@ -419,7 +419,7 @@ class TestLineItemActions:
         assert data["total_price_cents"] == 8000
 
     def test_create_line_item_on_closed_ticket_returns_400(
-        self, client, as_test_user, ticket_service, sample_ticket, sample_service
+        self, client, as_test_workspace, ticket_service, sample_ticket, sample_service
     ):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
@@ -437,7 +437,7 @@ class TestLineItemActions:
         assert response.status_code == 400
         assert "closed" in response.json()["error"]["message"].lower()
 
-    def test_delete_line_item(self, client, as_test_user, line_item_service, sample_ticket, sample_service):
+    def test_delete_line_item(self, client, as_test_workspace, line_item_service, sample_ticket, sample_service):
         li = line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
 
         response = client.post("/api/actions", json={
@@ -449,7 +449,7 @@ class TestLineItemActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_line_item_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_line_item_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "line_item",
             "action": "delete",
@@ -481,7 +481,7 @@ class TestNoteActions:
         assert data["customer_id"] == str(sample_customer.id)
         assert data["content"] == "Has two large dogs"
 
-    def test_delete_note(self, client, as_test_user, note_service, sample_customer):
+    def test_delete_note(self, client, as_test_workspace, note_service, sample_customer):
         note = note_service.create(NoteCreate(
             customer_id=sample_customer.id,
             content="Temporary note",
@@ -496,7 +496,7 @@ class TestNoteActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_note_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_note_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "note",
             "action": "delete",
@@ -542,7 +542,7 @@ class TestAddressActions:
         assert response.json()["data"]["city"] == "Houston"
         assert response.json()["data"]["street"] == "456 Oak Ave"
 
-    def test_update_nonexistent_address_returns_404(self, client, as_test_user):
+    def test_update_nonexistent_address_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "address",
             "action": "update",
@@ -561,7 +561,7 @@ class TestAddressActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_address_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_address_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "address",
             "action": "delete",
@@ -578,7 +578,7 @@ class TestAddressActions:
 
 class TestCatalogActions:
 
-    def test_create_service(self, client, as_test_user):
+    def test_create_service(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "catalog",
             "action": "create",
@@ -614,7 +614,7 @@ class TestCatalogActions:
         assert response.status_code == 200
         assert response.json()["success"] is True
 
-    def test_delete_nonexistent_service_returns_404(self, client, as_test_user):
+    def test_delete_nonexistent_service_returns_404(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "catalog",
             "action": "delete",
@@ -648,7 +648,7 @@ class TestAttributeActions:
         assert data["key"] == "property_type"
         assert data["value"] == "commercial"
 
-    def test_delete_attribute(self, client, as_test_user, attribute_service, sample_customer):
+    def test_delete_attribute(self, client, as_test_workspace, attribute_service, sample_customer):
         attr = attribute_service.create(AttributeCreate(
             customer_id=sample_customer.id,
             key="gate_code",
@@ -691,7 +691,7 @@ class TestMessageActions:
         assert data["status"] == "pending"
         assert data["subject"] == "Follow up"
 
-    def test_cancel_message(self, client, as_test_user, message_service, sample_customer):
+    def test_cancel_message(self, client, as_test_workspace, message_service, sample_customer):
         message = message_service.schedule(ScheduledMessageCreate(
             customer_id=sample_customer.id,
             message_type=MessageType.CUSTOM,
@@ -715,7 +715,7 @@ class TestMessageActions:
 
 class TestActionsResponseFormat:
 
-    def test_success_format(self, client, as_test_user):
+    def test_success_format(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "create",
@@ -729,7 +729,7 @@ class TestActionsResponseFormat:
         assert "timestamp" in body["meta"]
         assert "request_id" in body["meta"]
 
-    def test_error_format(self, client, as_test_user):
+    def test_error_format(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
             "domain": "customer",
             "action": "update",

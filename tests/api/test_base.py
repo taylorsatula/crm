@@ -71,8 +71,5 @@ class TestErrorCodes:
     def test_has_not_authenticated(self):
         assert ErrorCodes.NOT_AUTHENTICATED == "NOT_AUTHENTICATED"
 
-    def test_has_rate_limited(self):
-        assert ErrorCodes.RATE_LIMITED == "RATE_LIMITED"
-
     def test_has_service_unavailable(self):
         assert ErrorCodes.SERVICE_UNAVAILABLE == "SERVICE_UNAVAILABLE"
