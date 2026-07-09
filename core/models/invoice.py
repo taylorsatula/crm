@@ -38,7 +38,7 @@ class Invoice(BaseModel):
     """Full invoice entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID
     ticket_id: UUID
     invoice_number: str

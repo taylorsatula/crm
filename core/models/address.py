@@ -37,7 +37,7 @@ class Address(BaseModel):
     """Full address entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID
     label: str | None
     street: str

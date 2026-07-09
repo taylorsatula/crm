@@ -36,7 +36,7 @@ def address_service(db):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
 
@@ -46,7 +46,7 @@ def test_customer(as_test_user, customer_service):
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     """Create a test address."""
     from core.models import AddressCreate
 
@@ -62,7 +62,7 @@ def test_address(as_test_user, address_service, test_customer):
 class TestTicketCreate:
     """Tests for TicketService.create."""
 
-    def test_creates_ticket(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_creates_ticket(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Creates ticket with provided data."""
         from core.models import TicketCreate, TicketStatus
 
@@ -79,7 +79,7 @@ class TestTicketCreate:
         assert ticket.address_id == test_address.id
         assert ticket.status == TicketStatus.SCHEDULED
 
-    def test_starts_with_scheduled_status(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_starts_with_scheduled_status(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """New tickets start in SCHEDULED status."""
         from core.models import TicketCreate, TicketStatus
 
@@ -98,7 +98,7 @@ class TestTicketCreate:
 class TestTicketClockIn:
     """Tests for TicketService.clock_in."""
 
-    def test_clock_in_sets_time_and_status(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_clock_in_sets_time_and_status(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """clock_in sets clock_in_at and status to IN_PROGRESS."""
         from core.models import TicketCreate, TicketStatus
 
@@ -113,7 +113,7 @@ class TestTicketClockIn:
         assert updated.clock_in_at is not None
         assert updated.status == TicketStatus.IN_PROGRESS
 
-    def test_clock_in_rejects_non_scheduled(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_clock_in_rejects_non_scheduled(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot clock into completed ticket (already clocked in takes precedence)."""
         from core.models import TicketCreate
 
@@ -132,7 +132,7 @@ class TestTicketClockIn:
         with pytest.raises(ValueError, match="already clocked in"):
             ticket_service.clock_in(ticket.id)
 
-    def test_clock_in_rejects_already_clocked(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_clock_in_rejects_already_clocked(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot clock in twice."""
         from core.models import TicketCreate
 
@@ -151,7 +151,7 @@ class TestTicketClockIn:
 class TestTicketClockOut:
     """Tests for TicketService.clock_out."""
 
-    def test_clock_out_calculates_duration(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_clock_out_calculates_duration(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """clock_out sets clock_out_at and calculates duration."""
         from core.models import TicketCreate
 
@@ -168,7 +168,7 @@ class TestTicketClockOut:
         assert updated.actual_duration_minutes is not None
         assert updated.actual_duration_minutes >= 0
 
-    def test_clock_out_requires_clock_in(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_clock_out_requires_clock_in(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot clock out without clocking in first."""
         from core.models import TicketCreate
 
@@ -185,7 +185,7 @@ class TestTicketClockOut:
 class TestTicketClose:
     """Tests for TicketService.close."""
 
-    def test_close_marks_completed(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_close_marks_completed(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """close sets status to COMPLETED and closed_at."""
         from core.models import TicketCreate, TicketStatus
 
@@ -202,7 +202,7 @@ class TestTicketClose:
         assert closed.status == TicketStatus.COMPLETED
         assert closed.closed_at is not None
 
-    def test_closed_ticket_immutable(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_closed_ticket_immutable(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot modify closed ticket."""
         from core.models import TicketCreate, TicketUpdate
 
@@ -223,7 +223,7 @@ class TestTicketClose:
 class TestTicketCancel:
     """Tests for TicketService.cancel."""
 
-    def test_cancel_sets_status(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_cancel_sets_status(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """cancel sets status to CANCELLED."""
         from core.models import TicketCreate, TicketStatus
 
@@ -237,7 +237,7 @@ class TestTicketCancel:
 
         assert cancelled.status == TicketStatus.CANCELLED
 
-    def test_cannot_cancel_completed(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_cannot_cancel_completed(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot cancel a completed ticket."""
         from core.models import TicketCreate
 
@@ -258,7 +258,7 @@ class TestTicketCancel:
 class TestTicketList:
     """Tests for TicketService list methods."""
 
-    def test_list_by_date_range(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_list_by_date_range(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """list_by_date_range returns tickets in range."""
         from core.models import TicketCreate
 
@@ -284,7 +284,7 @@ class TestTicketList:
         assert len(tickets) >= 1
         assert all(start <= t.scheduled_at <= end for t in tickets)
 
-    def test_list_for_customer(self, db, as_test_user, ticket_service, customer_service, test_address):
+    def test_list_for_customer(self, db, as_test_workspace, ticket_service, customer_service, test_address):
         """list_for_customer returns only that customer's tickets."""
         from core.models import TicketCreate, CustomerCreate, AddressCreate
 
@@ -320,32 +320,37 @@ class TestTicketList:
 class TestTicketListToday:
     """Tests for TicketService.list_today."""
 
-    def test_returns_tickets_scheduled_today(self, db, as_test_user, ticket_service, test_customer, test_address):
-        """list_today returns only today's tickets."""
+    def test_returns_tickets_scheduled_today(self, db, as_test_workspace, ticket_service, test_customer, test_address):
+        """list_today returns only the current user's local-day tickets."""
         from core.models import TicketCreate
-        from datetime import time, timezone
+        from datetime import time
+        from zoneinfo import ZoneInfo
 
-        today = now_utc().date()
-        today_morning = datetime.combine(today, time(9, 0), tzinfo=timezone.utc)
-        tomorrow_morning = datetime.combine(today + timedelta(days=1), time(9, 0), tzinfo=timezone.utc)
+        # The seeded test workspace's timezone (schema default). list_today defines
+        # "today" in this timezone, so schedule one ticket within the local
+        # day and one in the next local day.
+        local_tz = ZoneInfo("America/Chicago")
+        today_local = now_utc().astimezone(local_tz).date()
+        today_morning_local = datetime.combine(today_local, time(9, 0), tzinfo=local_tz)
+        tomorrow_morning_local = datetime.combine(today_local + timedelta(days=1), time(9, 0), tzinfo=local_tz)
 
-        ticket_service.create(TicketCreate(
+        today_ticket = ticket_service.create(TicketCreate(
             customer_id=test_customer.id,
             address_id=test_address.id,
-            scheduled_at=today_morning
+            scheduled_at=today_morning_local
         ))
         ticket_service.create(TicketCreate(
             customer_id=test_customer.id,
             address_id=test_address.id,
-            scheduled_at=tomorrow_morning
+            scheduled_at=tomorrow_morning_local
         ))
 
         tickets = ticket_service.list_today()
 
         assert len(tickets) == 1
-        assert tickets[0].scheduled_at.date() == today
+        assert tickets[0].id == today_ticket.id
 
-    def test_returns_empty_when_no_tickets_today(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_returns_empty_when_no_tickets_today(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """list_today returns empty list when no tickets scheduled today."""
         from core.models import TicketCreate
         from datetime import time, timezone
@@ -361,24 +366,26 @@ class TestTicketListToday:
 
         assert tickets == []
 
-    def test_ordered_by_scheduled_at(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_ordered_by_scheduled_at(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """list_today orders tickets by scheduled_at ascending."""
         from core.models import TicketCreate
-        from datetime import time, timezone
+        from datetime import time
+        from zoneinfo import ZoneInfo
 
-        today = now_utc().date()
-        afternoon = datetime.combine(today, time(14, 0), tzinfo=timezone.utc)
-        morning = datetime.combine(today, time(8, 0), tzinfo=timezone.utc)
+        local_tz = ZoneInfo("America/Chicago")
+        today_local = now_utc().astimezone(local_tz).date()
+        afternoon_local = datetime.combine(today_local, time(14, 0), tzinfo=local_tz)
+        morning_local = datetime.combine(today_local, time(8, 0), tzinfo=local_tz)
 
         ticket_service.create(TicketCreate(
             customer_id=test_customer.id,
             address_id=test_address.id,
-            scheduled_at=afternoon
+            scheduled_at=afternoon_local
         ))
         ticket_service.create(TicketCreate(
             customer_id=test_customer.id,
             address_id=test_address.id,
-            scheduled_at=morning
+            scheduled_at=morning_local
         ))
 
         tickets = ticket_service.list_today()
@@ -390,7 +397,7 @@ class TestTicketListToday:
 class TestTicketGetCurrent:
     """Tests for TicketService.get_current."""
 
-    def test_returns_in_progress_ticket(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_returns_in_progress_ticket(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """get_current returns in-progress ticket."""
         from core.models import TicketCreate, TicketStatus
 
@@ -407,7 +414,7 @@ class TestTicketGetCurrent:
         assert current.id == ticket.id
         assert current.status == TicketStatus.IN_PROGRESS
 
-    def test_returns_none_when_only_scheduled(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_returns_none_when_only_scheduled(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """get_current returns None when tickets exist but none are in-progress."""
         from core.models import TicketCreate
 
@@ -421,7 +428,7 @@ class TestTicketGetCurrent:
 
         assert current is None
 
-    def test_returns_none_after_clock_out(self, db, as_test_user, ticket_service, test_customer, test_address):
+    def test_returns_none_after_clock_out(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """get_current returns None after the active ticket is clocked out."""
         from core.models import TicketCreate
 
@@ -437,7 +444,7 @@ class TestTicketGetCurrent:
 
         assert current is None
 
-    def test_returns_none_when_no_tickets(self, db, as_test_user, ticket_service):
+    def test_returns_none_when_no_tickets(self, db, as_test_workspace, ticket_service):
         """get_current returns None when no tickets exist."""
         current = ticket_service.get_current()
 
@@ -447,7 +454,7 @@ class TestTicketGetCurrent:
 class TestTicketEventPublishing:
     """Verify that TicketService publishes domain events to the bus."""
 
-    def test_create_publishes_ticket_created(self, db, as_test_user, ticket_service, event_bus, test_customer, test_address):
+    def test_create_publishes_ticket_created(self, db, as_test_workspace, ticket_service, event_bus, test_customer, test_address):
         from core.models import TicketCreate
         from core.events import TicketCreated
 
@@ -465,7 +472,7 @@ class TestTicketEventPublishing:
         assert received[0].ticket.id == ticket.id
         assert received[0].ticket.customer_id == test_customer.id
 
-    def test_clock_in_publishes_ticket_clock_in(self, db, as_test_user, ticket_service, event_bus, test_customer, test_address):
+    def test_clock_in_publishes_ticket_clock_in(self, db, as_test_workspace, ticket_service, event_bus, test_customer, test_address):
         from core.models import TicketCreate
         from core.events import TicketClockIn
 
@@ -485,7 +492,7 @@ class TestTicketEventPublishing:
         assert received[0].ticket.id == ticket.id
         assert received[0].ticket.clock_in_at is not None
 
-    def test_close_publishes_ticket_completed(self, db, as_test_user, ticket_service, event_bus, test_customer, test_address):
+    def test_close_publishes_ticket_completed(self, db, as_test_workspace, ticket_service, event_bus, test_customer, test_address):
         from core.models import TicketCreate, TicketStatus
         from core.events import TicketCompleted
 
@@ -505,7 +512,7 @@ class TestTicketEventPublishing:
         assert received[0].ticket.id == ticket.id
         assert received[0].ticket.status == TicketStatus.COMPLETED
 
-    def test_cancel_publishes_ticket_cancelled(self, db, as_test_user, ticket_service, event_bus, test_customer, test_address):
+    def test_cancel_publishes_ticket_cancelled(self, db, as_test_workspace, ticket_service, event_bus, test_customer, test_address):
         from core.models import TicketCreate, TicketStatus
         from core.events import TicketCancelled
 

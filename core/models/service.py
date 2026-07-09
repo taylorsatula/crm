@@ -58,7 +58,7 @@ class Service(BaseModel):
     """Full service entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     name: str
     description: str | None
     pricing_type: PricingType

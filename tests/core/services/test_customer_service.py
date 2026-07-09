@@ -17,7 +17,7 @@ def customer_service(db, event_bus):
 class TestCustomerCreate:
     """Tests for CustomerService.create."""
 
-    def test_creates_customer(self, db, as_test_user, customer_service):
+    def test_creates_customer(self, db, as_test_workspace, customer_service):
         """Creates customer with provided data."""
         from core.models import CustomerCreate
 
@@ -34,16 +34,16 @@ class TestCustomerCreate:
         assert customer.last_name == "Smith"
         assert customer.email == "alice@test.com"
 
-    def test_sets_user_id_from_context(self, db, as_test_user, test_user_id, customer_service):
-        """user_id comes from context, not parameter."""
+    def test_sets_workspace_id_from_context(self, db, as_test_workspace, test_workspace_id, customer_service):
+        """workspace_id comes from context, not parameter."""
         from core.models import CustomerCreate
 
         data = CustomerCreate(first_name="Bob")
         customer = customer_service.create(data)
 
-        assert customer.user_id == test_user_id
+        assert customer.workspace_id == test_workspace_id
 
-    def test_logs_audit_entry(self, db, as_test_user, customer_service):
+    def test_logs_audit_entry(self, db, as_test_workspace, customer_service):
         """Create logged to audit_log."""
         from core.models import CustomerCreate
 
@@ -63,7 +63,7 @@ class TestCustomerCreate:
 class TestCustomerGetById:
     """Tests for CustomerService.get_by_id."""
 
-    def test_returns_customer_when_exists(self, db, as_test_user, customer_service):
+    def test_returns_customer_when_exists(self, db, as_test_workspace, customer_service):
         """Get by ID returns customer."""
         from core.models import CustomerCreate
 
@@ -76,23 +76,23 @@ class TestCustomerGetById:
         assert found.id == created.id
         assert found.first_name == "Charlie"
 
-    def test_returns_none_for_nonexistent(self, db, as_test_user, customer_service):
+    def test_returns_none_for_nonexistent(self, db, as_test_workspace, customer_service):
         """Missing ID returns None."""
         result = customer_service.get_by_id(uuid4())
         assert result is None
 
-    def test_rls_blocks_other_users_customer(self, db, as_test_user, as_test_user_b, test_user_id, test_user_b_id, customer_service):
+    def test_rls_blocks_other_users_customer(self, db, as_test_workspace, as_test_workspace_b, test_workspace_id, test_workspace_b_id, customer_service):
         """User B cannot see User A's customer."""
         from core.models import CustomerCreate
-        from utils.user_context import user_context
+        from utils.workspace_context import workspace_context
 
         # User A creates customer
-        with user_context(test_user_id):
+        with workspace_context(test_workspace_id):
             data = CustomerCreate(first_name="Private")
             customer = customer_service.create(data)
 
         # User B tries to access
-        with user_context(test_user_b_id):
+        with workspace_context(test_workspace_b_id):
             result = customer_service.get_by_id(customer.id)
 
         assert result is None
@@ -101,7 +101,7 @@ class TestCustomerGetById:
 class TestCustomerUpdate:
     """Tests for CustomerService.update."""
 
-    def test_updates_specified_fields(self, db, as_test_user, customer_service):
+    def test_updates_specified_fields(self, db, as_test_workspace, customer_service):
         """Only provided fields change."""
         from core.models import CustomerCreate, CustomerUpdate
 
@@ -114,7 +114,7 @@ class TestCustomerUpdate:
         assert updated.first_name == "Dave"  # Unchanged
         assert updated.email == "dave@new.com"  # Changed
 
-    def test_logs_field_changes(self, db, as_test_user, customer_service):
+    def test_logs_field_changes(self, db, as_test_workspace, customer_service):
         """Audit shows old and new values."""
         from core.models import CustomerCreate, CustomerUpdate
 
@@ -136,7 +136,7 @@ class TestCustomerUpdate:
         assert changes["first_name"]["old"] == "Eve"
         assert changes["first_name"]["new"] == "Eva"
 
-    def test_raises_for_nonexistent(self, db, as_test_user, customer_service):
+    def test_raises_for_nonexistent(self, db, as_test_workspace, customer_service):
         """Update on missing customer raises."""
         from core.models import CustomerUpdate
 
@@ -149,7 +149,7 @@ class TestCustomerUpdate:
 class TestCustomerDelete:
     """Tests for CustomerService.delete."""
 
-    def test_soft_deletes(self, db, db_admin, as_test_user, customer_service):
+    def test_soft_deletes(self, db, as_test_workspace, customer_service):
         """Sets deleted_at, doesn't remove row."""
         from core.models import CustomerCreate
 
@@ -158,15 +158,16 @@ class TestCustomerDelete:
 
         customer_service.delete(customer.id)
 
-        # Row still exists with deleted_at set (check via admin to bypass RLS)
-        rows = db_admin.execute(
+        # Row still exists with deleted_at set. RLS only filters on workspace_id
+        # (not deleted_at), so the same transaction's connection sees it.
+        rows = db.execute(
             "SELECT deleted_at FROM customers WHERE id = %s",
             (customer.id,)
         )
         assert len(rows) == 1
         assert rows[0]["deleted_at"] is not None
 
-    def test_deleted_invisible_via_rls(self, db, as_test_user, customer_service):
+    def test_deleted_invisible_via_rls(self, db, as_test_workspace, customer_service):
         """Soft-deleted not returned by get_by_id."""
         from core.models import CustomerCreate
 
@@ -178,7 +179,7 @@ class TestCustomerDelete:
         result = customer_service.get_by_id(customer.id)
         assert result is None
 
-    def test_logs_delete_action(self, db, as_test_user, customer_service):
+    def test_logs_delete_action(self, db, as_test_workspace, customer_service):
         """Delete logged to audit_log."""
         from core.models import CustomerCreate
 
@@ -198,7 +199,7 @@ class TestCustomerDelete:
 class TestCustomerList:
     """Tests for CustomerService.list."""
 
-    def test_returns_customers(self, db, as_test_user, customer_service):
+    def test_returns_customers(self, db, as_test_workspace, customer_service):
         """List returns created customers."""
         from core.models import CustomerCreate
 
@@ -209,7 +210,7 @@ class TestCustomerList:
 
         assert len(result) >= 2
 
-    def test_respects_limit(self, db, as_test_user, customer_service):
+    def test_respects_limit(self, db, as_test_workspace, customer_service):
         """List respects limit parameter."""
         from core.models import CustomerCreate
 
@@ -220,7 +221,7 @@ class TestCustomerList:
 
         assert len(result) == 3
 
-    def test_offset_pagination(self, db, as_test_user, customer_service):
+    def test_offset_pagination(self, db, as_test_workspace, customer_service):
         """Offset skips records."""
         from core.models import CustomerCreate
 
@@ -239,7 +240,7 @@ class TestCustomerList:
 class TestCustomerSearch:
     """Tests for CustomerService.search."""
 
-    def test_finds_by_first_name(self, db, as_test_user, customer_service):
+    def test_finds_by_first_name(self, db, as_test_workspace, customer_service):
         """Search matches first_name."""
         from core.models import CustomerCreate
 
@@ -251,7 +252,7 @@ class TestCustomerSearch:
         assert len(results) >= 1
         assert any(c.first_name == "Katherine" for c in results)
 
-    def test_finds_by_email(self, db, as_test_user, customer_service):
+    def test_finds_by_email(self, db, as_test_workspace, customer_service):
         """Search matches email."""
         from core.models import CustomerCreate
 
@@ -265,7 +266,7 @@ class TestCustomerSearch:
         assert len(results) >= 1
         assert any(c.email == "larry@unique-domain.com" for c in results)
 
-    def test_case_insensitive(self, db, as_test_user, customer_service):
+    def test_case_insensitive(self, db, as_test_workspace, customer_service):
         """Search is case-insensitive."""
         from core.models import CustomerCreate
 
@@ -279,7 +280,7 @@ class TestCustomerSearch:
 class TestCustomerEventPublishing:
     """Verify that CustomerService publishes domain events to the bus."""
 
-    def test_create_publishes_customer_created(self, db, as_test_user, customer_service, event_bus):
+    def test_create_publishes_customer_created(self, db, as_test_workspace, customer_service, event_bus):
         from core.models import CustomerCreate
         from core.events import CustomerCreated
 

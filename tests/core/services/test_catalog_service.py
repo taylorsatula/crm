@@ -17,7 +17,7 @@ def catalog_service(db):
 class TestServiceCreate:
     """Tests for CatalogService.create."""
 
-    def test_creates_fixed_price_service(self, db, as_test_user, catalog_service):
+    def test_creates_fixed_price_service(self, db, as_test_workspace, catalog_service):
         """Creates service with fixed pricing."""
         from core.models import ServiceCreate, PricingType
 
@@ -33,7 +33,7 @@ class TestServiceCreate:
         assert service.pricing_type == "fixed"
         assert service.default_price_cents == 15000
 
-    def test_creates_per_unit_service(self, db, as_test_user, catalog_service):
+    def test_creates_per_unit_service(self, db, as_test_workspace, catalog_service):
         """Creates service with per-unit pricing."""
         from core.models import ServiceCreate, PricingType
 
@@ -50,7 +50,7 @@ class TestServiceCreate:
         assert service.unit_price_cents == 500
         assert service.unit_label == "screen"
 
-    def test_creates_flexible_service(self, db, as_test_user, catalog_service):
+    def test_creates_flexible_service(self, db, as_test_workspace, catalog_service):
         """Creates service with flexible pricing (price set per appointment)."""
         from core.models import ServiceCreate, PricingType
 
@@ -66,7 +66,7 @@ class TestServiceCreate:
         assert service.default_price_cents is None
         assert service.unit_price_cents is None
 
-    def test_flexible_can_have_optional_default(self, db, as_test_user, catalog_service):
+    def test_flexible_can_have_optional_default(self, db, as_test_workspace, catalog_service):
         """Flexible services can have an optional default price as a starting point."""
         from core.models import ServiceCreate, PricingType
 
@@ -82,8 +82,8 @@ class TestServiceCreate:
         assert service.pricing_type == "flexible"
         assert service.default_price_cents == 10000
 
-    def test_sets_user_id_from_context(self, db, as_test_user, test_user_id, catalog_service):
-        """user_id comes from context."""
+    def test_sets_workspace_id_from_context(self, db, as_test_workspace, test_workspace_id, catalog_service):
+        """workspace_id comes from context."""
         from core.models import ServiceCreate, PricingType
 
         data = ServiceCreate(
@@ -94,9 +94,9 @@ class TestServiceCreate:
 
         service = catalog_service.create(data)
 
-        assert service.user_id == test_user_id
+        assert service.workspace_id == test_workspace_id
 
-    def test_is_active_defaults_true(self, db, as_test_user, catalog_service):
+    def test_is_active_defaults_true(self, db, as_test_workspace, catalog_service):
         """New services are active by default."""
         from core.models import ServiceCreate, PricingType
 
@@ -114,7 +114,7 @@ class TestServiceCreate:
 class TestServiceGetById:
     """Tests for CatalogService.get_by_id."""
 
-    def test_returns_service_when_exists(self, db, as_test_user, catalog_service):
+    def test_returns_service_when_exists(self, db, as_test_workspace, catalog_service):
         """Get by ID returns service."""
         from core.models import ServiceCreate, PricingType
 
@@ -129,7 +129,7 @@ class TestServiceGetById:
         assert found is not None
         assert found.id == created.id
 
-    def test_returns_none_for_nonexistent(self, db, as_test_user, catalog_service):
+    def test_returns_none_for_nonexistent(self, db, as_test_workspace, catalog_service):
         """Missing ID returns None."""
         result = catalog_service.get_by_id(uuid4())
         assert result is None
@@ -138,7 +138,7 @@ class TestServiceGetById:
 class TestServiceListActive:
     """Tests for CatalogService.list_active."""
 
-    def test_returns_active_services(self, db, as_test_user, catalog_service):
+    def test_returns_active_services(self, db, as_test_workspace, catalog_service):
         """List returns only active services."""
         from core.models import ServiceCreate, PricingType
 
@@ -158,7 +158,7 @@ class TestServiceListActive:
         assert len(services) >= 2
         assert all(s.is_active for s in services)
 
-    def test_excludes_inactive_services(self, db, as_test_user, catalog_service):
+    def test_excludes_inactive_services(self, db, as_test_workspace, catalog_service):
         """Inactive services not returned."""
         from core.models import ServiceCreate, ServiceUpdate, PricingType
 
@@ -178,7 +178,7 @@ class TestServiceListActive:
 class TestServiceUpdate:
     """Tests for CatalogService.update."""
 
-    def test_updates_price(self, db, as_test_user, catalog_service):
+    def test_updates_price(self, db, as_test_workspace, catalog_service):
         """Can update default_price_cents."""
         from core.models import ServiceCreate, ServiceUpdate, PricingType
 
@@ -195,7 +195,7 @@ class TestServiceUpdate:
 
         assert updated.default_price_cents == 1500
 
-    def test_can_deactivate(self, db, as_test_user, catalog_service):
+    def test_can_deactivate(self, db, as_test_workspace, catalog_service):
         """Can set is_active=False."""
         from core.models import ServiceCreate, ServiceUpdate, PricingType
 
@@ -213,7 +213,7 @@ class TestServiceUpdate:
 class TestServiceDelete:
     """Tests for CatalogService.delete."""
 
-    def test_soft_deletes(self, db, db_admin, as_test_user, catalog_service):
+    def test_soft_deletes(self, db, as_test_workspace, catalog_service):
         """Services are soft deleted."""
         from core.models import ServiceCreate, PricingType
 
@@ -225,15 +225,16 @@ class TestServiceDelete:
 
         catalog_service.delete(service.id)
 
-        # Row still exists with deleted_at set
-        rows = db_admin.execute(
+        # Row still exists with deleted_at set (RLS filters on workspace_id, not
+        # deleted_at, so the same transaction's connection sees it)
+        rows = db.execute(
             "SELECT deleted_at FROM services WHERE id = %s",
             (service.id,)
         )
         assert len(rows) == 1
         assert rows[0]["deleted_at"] is not None
 
-    def test_deleted_not_in_list(self, db, as_test_user, catalog_service):
+    def test_deleted_not_in_list(self, db, as_test_workspace, catalog_service):
         """Deleted services not returned by list_active."""
         from core.models import ServiceCreate, PricingType
 

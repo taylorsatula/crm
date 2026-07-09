@@ -8,13 +8,21 @@ Tickets are immutable after being closed.
 import logging
 from datetime import datetime, time, timezone, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
 from core.event_bus import EventBus
 from core.events import TicketCreated, TicketClockIn, TicketCompleted, TicketCancelled
+from core.exceptions import (
+    NotFoundError,
+    TicketImmutableError,
+    TicketNotClockableError,
+    TicketNotCloseableError,
+    InvalidStatusTransitionError,
+)
 from core.models import Ticket, TicketCreate, TicketUpdate, TicketStatus, ConfirmationStatus
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id, get_current_workspace_timezone
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -23,6 +31,12 @@ _UPDATABLE_COLUMNS = {
     "address_id", "scheduled_at", "scheduled_duration_minutes",
     "is_price_estimated", "notes", "confirmation_status"
 }
+# NOTE: `address_id` is updatable here (moving a job to a different service
+# address is a valid backend operation), but the mira-OSS crm_jobs_tool layer
+# deliberately does NOT expose it on update_ticket. Changing a job's address is
+# intentionally handled by cancelling and recreating the ticket from the tool
+# surface. Do not add address_id to the tool's update_ticket without an
+# explicit decision — it is kept out of the tool contract on purpose.
 
 
 class TicketService:
@@ -43,14 +57,14 @@ class TicketService:
         Returns:
             Created ticket in SCHEDULED status
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         ticket_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO tickets (
-                id, user_id, customer_id, address_id,
+                id, workspace_id, customer_id, address_id,
                 status, scheduled_at, scheduled_duration_minutes,
                 confirmation_status, is_price_estimated, notes,
                 created_at, updated_at
@@ -63,7 +77,7 @@ class TicketService:
             RETURNING *
             """,
             (
-                ticket_id, user_id, data.customer_id, data.address_id,
+                ticket_id, workspace_id, data.customer_id, data.address_id,
                 TicketStatus.SCHEDULED.value, data.scheduled_at, data.scheduled_duration_minutes,
                 ConfirmationStatus.PENDING.value, data.is_price_estimated, data.notes,
                 now, now
@@ -119,10 +133,10 @@ class TicketService:
         """
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         if current.is_closed:
-            raise ValueError(f"Ticket {ticket_id} is closed and immutable")
+            raise TicketImmutableError(f"Ticket {ticket_id} is closed and immutable")
 
         updates = data.model_dump(exclude_none=True)
         if not updates:
@@ -193,14 +207,14 @@ class TicketService:
         """
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         # Check clock_in_at first - more specific error
         if current.clock_in_at is not None:
-            raise ValueError(f"Ticket {ticket_id} already clocked in")
+            raise TicketNotClockableError(f"Ticket {ticket_id} already clocked in")
 
         if current.status != TicketStatus.SCHEDULED:
-            raise ValueError(f"Ticket {ticket_id} cannot clock in - status is {current.status.value}")
+            raise TicketNotClockableError(f"Ticket {ticket_id} cannot clock in - status is {current.status.value}")
 
         now = now_utc()
         row = self.postgres.execute_returning(
@@ -244,13 +258,13 @@ class TicketService:
         """
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         if current.clock_in_at is None:
-            raise ValueError(f"Ticket {ticket_id} not clocked in")
+            raise TicketNotClockableError(f"Ticket {ticket_id} not clocked in")
 
         if current.clock_out_at is not None:
-            raise ValueError(f"Ticket {ticket_id} already clocked out")
+            raise TicketNotClockableError(f"Ticket {ticket_id} already clocked out")
 
         now = now_utc()
         duration_minutes = int((now - current.clock_in_at).total_seconds() / 60)
@@ -294,10 +308,10 @@ class TicketService:
         """
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         if current.is_closed:
-            raise ValueError(f"Ticket {ticket_id} already closed")
+            raise TicketNotCloseableError(f"Ticket {ticket_id} already closed")
 
         now = now_utc()
         row = self.postgres.execute_returning(
@@ -344,14 +358,17 @@ class TicketService:
             Dict with 'ticket' and 'customer_id' for frontend disposition step
 
         Raises:
-            ValueError: If ticket cannot be closed
+            ValueError: If confirmed_duration_minutes is invalid or ticket cannot be closed
         """
+        if not isinstance(confirmed_duration_minutes, int) or confirmed_duration_minutes < 1:
+            raise ValueError("closeout requires a positive confirmed_duration_minutes")
+
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         if current.is_closed:
-            raise ValueError(f"Ticket {ticket_id} already closed")
+            raise TicketNotCloseableError(f"Ticket {ticket_id} already closed")
 
         # Update duration even if not clocked out
         now = now_utc()
@@ -402,13 +419,13 @@ class TicketService:
         """
         current = self.get_by_id(ticket_id)
         if current is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         if current.status == TicketStatus.COMPLETED:
-            raise ValueError(f"Ticket {ticket_id} cannot cancel - already completed")
+            raise InvalidStatusTransitionError(f"Ticket {ticket_id} cannot cancel - already completed")
 
         if current.status == TicketStatus.CANCELLED:
-            raise ValueError(f"Ticket {ticket_id} already cancelled")
+            raise InvalidStatusTransitionError(f"Ticket {ticket_id} already cancelled")
 
         now = now_utc()
         row = self.postgres.execute_returning(
@@ -469,14 +486,27 @@ class TicketService:
 
     def list_today(self) -> list[Ticket]:
         """
-        List tickets scheduled for today (UTC).
+        List tickets scheduled for the authenticated workspace's local today.
+
+        The caller supplies a validated IANA timezone in
+        ``X-Workspace-Timezone``. Day boundaries are computed in that timezone
+        and converted to UTC for the query, so a late-evening local job is not
+        pushed into the adjacent UTC day.
 
         Returns:
-            List of tickets scheduled today, ordered by scheduled_at ASC
+            List of tickets scheduled for the workspace's local today, ordered by
+            scheduled_at ASC
         """
-        today = now_utc().date()
-        today_start = datetime.combine(today, time.min, tzinfo=timezone.utc)
-        tomorrow_start = datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        local_tz = ZoneInfo(get_current_workspace_timezone())
+
+        now_local = now_utc().astimezone(local_tz)
+        today_local_start = datetime.combine(now_local.date(), time.min, tzinfo=local_tz)
+        tomorrow_local_start = today_local_start + timedelta(days=1)
+
+        # scheduled_at is stored as TIMESTAMPTZ (UTC); compare against the
+        # local-day boundaries expressed in UTC.
+        start_utc = today_local_start.astimezone(timezone.utc)
+        end_utc = tomorrow_local_start.astimezone(timezone.utc)
 
         rows = self.postgres.execute(
             """
@@ -485,7 +515,7 @@ class TicketService:
               AND deleted_at IS NULL
             ORDER BY scheduled_at ASC
             """,
-            (today_start, tomorrow_start)
+            (start_utc, end_utc)
         )
 
         return [Ticket.model_validate(row) for row in rows]

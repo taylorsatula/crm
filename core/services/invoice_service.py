@@ -13,8 +13,9 @@ from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
 from core.event_bus import EventBus
 from core.events import InvoiceSent, InvoicePaid
+from core.exceptions import NotFoundError, InvalidStatusTransitionError, InvoiceAlreadyPaidError
 from core.models import Invoice, InvoiceStatus
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class InvoiceService:
         self.audit = audit
         self.event_bus = event_bus
 
-    def _generate_invoice_number(self, user_id: UUID) -> str:
+    def _generate_invoice_number(self, workspace_id: UUID) -> str:
         """
         Generate a unique invoice number for a user.
 
@@ -41,11 +42,11 @@ class InvoiceService:
         result = self.postgres.execute_single(
             """
             SELECT invoice_number FROM invoices
-            WHERE user_id = %s AND invoice_number LIKE %s
+            WHERE workspace_id = %s AND invoice_number LIKE %s
             ORDER BY invoice_number DESC
             LIMIT 1
             """,
-            (user_id, f"{prefix}%")
+            (workspace_id, f"{prefix}%")
         )
 
         if result is None:
@@ -82,7 +83,7 @@ class InvoiceService:
         Raises:
             ValueError: If ticket not found or has no line items
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
 
         # Get ticket and customer
         ticket = self.postgres.execute_single(
@@ -90,7 +91,7 @@ class InvoiceService:
             (ticket_id,)
         )
         if ticket is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         customer_id = ticket["customer_id"]
 
@@ -113,13 +114,13 @@ class InvoiceService:
         total_amount_cents = subtotal_cents + tax_amount_cents
 
         invoice_id = uuid4()
-        invoice_number = self._generate_invoice_number(user_id)
+        invoice_number = self._generate_invoice_number(workspace_id)
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO invoices (
-                id, user_id, customer_id, ticket_id,
+                id, workspace_id, customer_id, ticket_id,
                 invoice_number, status,
                 subtotal_cents, tax_rate_bps, tax_amount_cents, total_amount_cents,
                 amount_paid_cents, notes, due_at,
@@ -134,7 +135,7 @@ class InvoiceService:
             RETURNING *
             """,
             (
-                invoice_id, user_id, customer_id, ticket_id,
+                invoice_id, workspace_id, customer_id, ticket_id,
                 invoice_number, InvoiceStatus.DRAFT.value,
                 subtotal_cents, tax_rate_bps, tax_amount_cents, total_amount_cents,
                 0, notes, due_at,
@@ -195,10 +196,10 @@ class InvoiceService:
         """
         current = self.get_by_id(invoice_id)
         if current is None:
-            raise ValueError(f"Invoice {invoice_id} not found")
+            raise NotFoundError(f"Invoice {invoice_id} not found")
 
         if current.status == InvoiceStatus.VOID:
-            raise ValueError(f"Invoice {invoice_id} is voided")
+            raise InvalidStatusTransitionError(f"Invoice {invoice_id} is voided")
 
         now = now_utc()
         row = self.postgres.execute_returning(
@@ -239,16 +240,26 @@ class InvoiceService:
             Updated invoice (status may become PARTIAL or PAID)
 
         Raises:
-            ValueError: If invoice not found or invalid state
+            ValueError: If invoice not found, voided, or the payment is invalid
         """
         current = self.get_by_id(invoice_id)
         if current is None:
-            raise ValueError(f"Invoice {invoice_id} not found")
+            raise NotFoundError(f"Invoice {invoice_id} not found")
 
         if current.status == InvoiceStatus.VOID:
-            raise ValueError(f"Invoice {invoice_id} is voided")
+            raise InvalidStatusTransitionError(f"Invoice {invoice_id} is voided")
 
-        new_amount_paid = current.amount_paid_cents + amount_cents
+        if not isinstance(amount_cents, int) or amount_cents <= 0:
+            raise ValueError("amount_cents must be a positive integer")
+
+        # Clamp the cumulative paid amount at the invoice total so an overpayment
+        # cannot drive amount_paid above total (which would produce a negative
+        # balance_due and mis-represent the invoice as overpaid). A payment that
+        # reaches or exceeds the remaining balance marks the invoice PAID with
+        # amount_paid_cents exactly equal to total_amount_cents.
+        remaining = current.total_amount_cents - current.amount_paid_cents
+        applied = min(amount_cents, remaining)
+        new_amount_paid = current.amount_paid_cents + applied
         now = now_utc()
 
         # Determine new status
@@ -278,7 +289,7 @@ class InvoiceService:
             changes={
                 "amount_paid_cents": {"old": current.amount_paid_cents, "new": new_amount_paid},
                 "status": {"old": current.status.value, "new": new_status.value},
-                "payment_recorded": amount_cents
+                "payment_recorded": applied
             }
         )
 
@@ -302,10 +313,10 @@ class InvoiceService:
         """
         current = self.get_by_id(invoice_id)
         if current is None:
-            raise ValueError(f"Invoice {invoice_id} not found")
+            raise NotFoundError(f"Invoice {invoice_id} not found")
 
         if current.status == InvoiceStatus.PAID:
-            raise ValueError(f"Invoice {invoice_id} is paid and cannot be voided")
+            raise InvoiceAlreadyPaidError(f"Invoice {invoice_id} is paid and cannot be voided")
 
         now = now_utc()
         row = self.postgres.execute_returning(

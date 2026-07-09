@@ -47,12 +47,12 @@ def address_service(db):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(first_name="Cancel", last_name="Test"))
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     from core.models import AddressCreate
     return address_service.create(AddressCreate(
         customer_id=test_customer.id,
@@ -61,7 +61,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 
 @pytest.fixture
-def test_ticket(as_test_user, ticket_service, test_customer, test_address):
+def test_ticket(as_test_workspace, ticket_service, test_customer, test_address):
     return ticket_service.create(TicketCreate(
         customer_id=test_customer.id,
         address_id=test_address.id,
@@ -77,7 +77,7 @@ def handler(message_service):
 class TestTicketCancellationHandler:
 
     def test_cancels_all_pending_messages_for_ticket(
-        self, db, as_test_user, handler, message_service, test_customer, test_ticket
+        self, db, as_test_workspace, handler, message_service, test_customer, test_ticket
     ):
         msg_1 = message_service.schedule(ScheduledMessageCreate(
             customer_id=test_customer.id,
@@ -101,7 +101,7 @@ class TestTicketCancellationHandler:
         assert message_service.get_by_id(msg_2.id).status == MessageStatus.CANCELLED
 
     def test_does_not_cancel_already_sent_messages(
-        self, db, as_test_user, handler, message_service, test_customer, test_ticket
+        self, db, as_test_workspace, handler, message_service, test_customer, test_ticket
     ):
         sent_msg = message_service.schedule(ScheduledMessageCreate(
             customer_id=test_customer.id,
@@ -129,7 +129,7 @@ class TestTicketCancellationHandler:
         assert message_service.get_by_id(pending_msg.id).status == MessageStatus.CANCELLED
 
     def test_no_pending_messages_is_noop(
-        self, db, as_test_user, handler, message_service, test_ticket
+        self, db, as_test_workspace, handler, message_service, test_ticket
     ):
         """No error when ticket has zero pending messages."""
         event = TicketCancelled(ticket=test_ticket)
@@ -137,7 +137,7 @@ class TestTicketCancellationHandler:
         # No assertion needed — just verifying it doesn't raise
 
     def test_does_not_cancel_messages_for_other_tickets(
-        self, db, as_test_user, handler, message_service,
+        self, db, as_test_workspace, handler, message_service,
         test_customer, test_ticket, ticket_service, test_address
     ):
         other_ticket = ticket_service.create(TicketCreate(

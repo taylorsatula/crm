@@ -28,7 +28,7 @@ class Note(BaseModel):
     """Full note entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID | None
     ticket_id: UUID | None
     content: str

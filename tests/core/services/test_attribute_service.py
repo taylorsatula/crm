@@ -36,7 +36,7 @@ def note_service(db, event_bus):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
 
@@ -46,7 +46,7 @@ def test_customer(as_test_user, customer_service):
 
 
 @pytest.fixture
-def test_note(as_test_user, note_service, test_customer):
+def test_note(as_test_workspace, note_service, test_customer):
     """Create a test note."""
     from core.models import NoteCreate
 
@@ -61,7 +61,7 @@ def test_note(as_test_user, note_service, test_customer):
 class TestAttributeCreate:
     """Tests for AttributeService.create."""
 
-    def test_creates_manual_attribute(self, db, as_test_user, attribute_service, test_customer):
+    def test_creates_manual_attribute(self, db, as_test_workspace, attribute_service, test_customer):
         """Creates manually entered attribute."""
         from core.models import AttributeCreate
 
@@ -80,7 +80,7 @@ class TestAttributeCreate:
         assert attr.source_type == "manual"
         assert attr.confidence is None
 
-    def test_creates_llm_extracted_attribute(self, db, as_test_user, attribute_service, test_customer, test_note):
+    def test_creates_llm_extracted_attribute(self, db, as_test_workspace, attribute_service, test_customer, test_note):
         """Creates LLM-extracted attribute with confidence."""
         from core.models import AttributeCreate
 
@@ -101,7 +101,7 @@ class TestAttributeCreate:
         assert attr.source_note_id == test_note.id
         assert attr.confidence == Decimal("0.85")
 
-    def test_upserts_on_duplicate_key(self, db, as_test_user, attribute_service, test_customer):
+    def test_upserts_on_duplicate_key(self, db, as_test_workspace, attribute_service, test_customer):
         """Creating attribute with existing key updates it."""
         from core.models import AttributeCreate
 
@@ -126,7 +126,7 @@ class TestAttributeCreate:
         window_counts = [a for a in attrs if a.key == "window_count"]
         assert len(window_counts) == 1
 
-    def test_stores_complex_value(self, db, as_test_user, attribute_service, test_customer):
+    def test_stores_complex_value(self, db, as_test_workspace, attribute_service, test_customer):
         """Stores complex JSON values."""
         from core.models import AttributeCreate
 
@@ -149,7 +149,7 @@ class TestAttributeCreate:
 class TestAttributeGet:
     """Tests for AttributeService get methods."""
 
-    def test_gets_attribute_by_id(self, db, as_test_user, attribute_service, test_customer):
+    def test_gets_attribute_by_id(self, db, as_test_workspace, attribute_service, test_customer):
         """Gets attribute by ID."""
         from core.models import AttributeCreate
 
@@ -164,7 +164,7 @@ class TestAttributeGet:
         assert fetched is not None
         assert fetched.id == created.id
 
-    def test_gets_attribute_by_key(self, db, as_test_user, attribute_service, test_customer):
+    def test_gets_attribute_by_key(self, db, as_test_workspace, attribute_service, test_customer):
         """Gets specific attribute by customer and key."""
         from core.models import AttributeCreate
 
@@ -180,12 +180,12 @@ class TestAttributeGet:
         assert fetched.key == "specific_key"
         assert fetched.value == "specific_value"
 
-    def test_returns_none_for_missing(self, db, as_test_user, attribute_service):
+    def test_returns_none_for_missing(self, db, as_test_workspace, attribute_service):
         """Returns None for non-existent attribute."""
         result = attribute_service.get_by_id(uuid4())
         assert result is None
 
-    def test_returns_none_for_missing_key(self, db, as_test_user, attribute_service, test_customer):
+    def test_returns_none_for_missing_key(self, db, as_test_workspace, attribute_service, test_customer):
         """Returns None for non-existent key."""
         result = attribute_service.get_for_customer(test_customer.id, "nonexistent_key")
         assert result is None
@@ -194,7 +194,7 @@ class TestAttributeGet:
 class TestAttributeList:
     """Tests for AttributeService.list_for_customer."""
 
-    def test_lists_customer_attributes(self, db, as_test_user, attribute_service, test_customer):
+    def test_lists_customer_attributes(self, db, as_test_workspace, attribute_service, test_customer):
         """Lists all attributes for a customer."""
         from core.models import AttributeCreate
 
@@ -220,7 +220,7 @@ class TestAttributeList:
 class TestAttributeDelete:
     """Tests for AttributeService.delete."""
 
-    def test_deletes_attribute(self, db, as_test_user, attribute_service, test_customer):
+    def test_deletes_attribute(self, db, as_test_workspace, attribute_service, test_customer):
         """Deletes attribute."""
         from core.models import AttributeCreate
 
@@ -237,7 +237,7 @@ class TestAttributeDelete:
         fetched = attribute_service.get_by_id(attr.id)
         assert fetched is None
 
-    def test_returns_false_for_missing(self, db, as_test_user, attribute_service):
+    def test_returns_false_for_missing(self, db, as_test_workspace, attribute_service):
         """Returns False when deleting non-existent attribute."""
         result = attribute_service.delete(uuid4())
         assert result is False
@@ -246,7 +246,7 @@ class TestAttributeDelete:
 class TestBulkCreate:
     """Tests for AttributeService.bulk_create_from_extraction."""
 
-    def test_bulk_creates_attributes(self, db, as_test_user, attribute_service, test_customer, test_note):
+    def test_bulk_creates_attributes(self, db, as_test_workspace, attribute_service, test_customer, test_note):
         """Bulk creates attributes from LLM extraction."""
         attrs = {
             "window_count": 15,

@@ -42,7 +42,7 @@ class ScheduledMessage(BaseModel):
     """Full scheduled message entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID
     ticket_id: UUID | None
     message_type: MessageType

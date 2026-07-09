@@ -51,7 +51,7 @@ class Ticket(BaseModel):
     """Full ticket entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID
     address_id: UUID
     status: TicketStatus

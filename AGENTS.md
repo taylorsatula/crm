@@ -93,9 +93,9 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 
 ## Architecture & Design
 
-### User Context Management
-- **Contextvar for Normal Operations**: Use contextvars for user-scoped operations - context flows automatically from authentication through to database RLS enforcement.
-- **Explicit Setting for Administrative Tasks**: For scheduled jobs and batch operations, explicitly set context when iterating over users.
+### Workspace Context Management
+- **Contextvar for Normal Operations**: Use `utils.workspace_context` for tenant-scoped operations. `InternalWorkspaceMiddleware` validates the private bearer credential, workspace UUID, and request timezone before route code runs.
+- **Explicit Setting for Administrative Tasks**: Scheduled jobs must explicitly establish workspace context for each workspace. Do not create CRM user or membership records.
 
 ### API Design
 - **Flat Structure**: No deeply nested resources. Prefer `/tickets/{id}` over `/customers/{id}/appointments/{id}/tickets/{id}`
@@ -104,7 +104,7 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 - **Pagination Built-In**: All list endpoints support cursor-based pagination
 
 ### Database Design
-- **PostgreSQL with RLS**: Row Level Security for automatic user isolation
+- **PostgreSQL with RLS**: Row Level Security for automatic workspace isolation
 - **Raw SQL**: Explicit queries over ORM for clarity and performance
 - **UUID Primary Keys**: Enable distributed ID generation
 - **Soft Deletes Where Appropriate**: For audit trail on business entities
@@ -189,10 +189,10 @@ data.model_dump()
 ```
 
 ### RLS Design Principle
-**RLS is for security (user isolation), not business logic (soft deletes).**
+**RLS is for security (workspace isolation), not business logic (soft deletes).**
 
-- **Correct**: `USING (user_id = current_setting('app.current_user_id')::uuid)`
-- **Wrong**: `USING (user_id = X AND deleted_at IS NULL)` - Mixing security with business logic causes edge cases
+- **Correct**: `USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)`
+- **Wrong**: `USING (workspace_id = X AND deleted_at IS NULL)` - Mixing security with business logic causes edge cases
 
 Handle soft-delete filtering in the application layer with `WHERE deleted_at IS NULL`.
 
@@ -215,9 +215,9 @@ Handle soft-delete filtering in the application layer with `WHERE deleted_at IS 
 **Example**: Hardcoding API keys or using fallback values for missing credentials
 **Lesson**: System should fail fast when credentials are missing rather than continuing with defaults.
 
-### Cross-User Data Access
-**Example**: Manual user_id filtering in database queries
-**Lesson**: User isolation is handled at the architecture level via RLS, not in individual queries. Design for this from the start.
+### Cross-Workspace Data Access
+**Example**: Manual workspace_id filtering in database queries
+**Lesson**: Workspace isolation is handled at the architecture level via RLS, not in individual queries. Design for this from the start.
 
 ### Premature Abstraction
 **Example**: Creating wrapper classes for utilities that are only used in one place, configuration objects for scenarios that don't exist, or complex hierarchies before understanding actual usage patterns

@@ -99,7 +99,7 @@ class TestComputeChanges:
 class TestAuditLogger:
     """Tests for AuditLogger class."""
 
-    def test_log_change_creates_entry(self, db, as_test_user):
+    def test_log_change_creates_entry(self, db, as_test_workspace):
         """Create audit entry for entity change."""
         from core.audit import AuditLogger, AuditAction
 
@@ -113,7 +113,7 @@ class TestAuditLogger:
             changes={"created": {"name": "Test Customer"}}
         )
 
-        # Verify entry exists (audit_log has no RLS)
+        # Verify entry exists within its workspace.
         entries = db.execute(
             "SELECT * FROM audit_log WHERE entity_id = %s",
             (entity_id,)
@@ -122,8 +122,8 @@ class TestAuditLogger:
         assert entries[0]["entity_type"] == "customer"
         assert entries[0]["action"] == "create"
 
-    def test_log_change_uses_context_user(self, db, as_test_user, test_user_id):
-        """Defaults to current user context."""
+    def test_log_change_uses_context_workspace(self, db, as_test_workspace, test_workspace_id):
+        """Defaults to current workspace context."""
         from core.audit import AuditLogger, AuditAction
 
         logger = AuditLogger(db)
@@ -137,33 +137,12 @@ class TestAuditLogger:
         )
 
         entries = db.execute(
-            "SELECT user_id FROM audit_log WHERE entity_id = %s",
+            "SELECT workspace_id FROM audit_log WHERE entity_id = %s",
             (entity_id,)
         )
-        assert entries[0]["user_id"] == test_user_id
+        assert entries[0]["workspace_id"] == test_workspace_id
 
-    def test_log_change_explicit_user_overrides(self, db, as_test_user, test_user_b_id):
-        """Explicit user_id overrides context."""
-        from core.audit import AuditLogger, AuditAction
-
-        logger = AuditLogger(db)
-        entity_id = uuid4()
-
-        logger.log_change(
-            entity_type="customer",
-            entity_id=entity_id,
-            action=AuditAction.UPDATE,
-            changes={"name": {"old": "A", "new": "B"}},
-            user_id=test_user_b_id
-        )
-
-        entries = db.execute(
-            "SELECT user_id FROM audit_log WHERE entity_id = %s",
-            (entity_id,)
-        )
-        assert entries[0]["user_id"] == test_user_b_id
-
-    def test_log_change_stores_changes_as_json(self, db, as_test_user):
+    def test_log_change_stores_changes_as_json(self, db, as_test_workspace):
         """Changes stored as JSONB."""
         from core.audit import AuditLogger, AuditAction
 
@@ -188,7 +167,7 @@ class TestAuditLogger:
         # JSONB comes back as dict
         assert entries[0]["changes"] == changes_data
 
-    def test_get_entity_history_returns_ordered(self, db, as_test_user):
+    def test_get_entity_history_returns_ordered(self, db, as_test_workspace):
         """History returned newest-first."""
         from core.audit import AuditLogger, AuditAction
         import time
@@ -218,7 +197,7 @@ class TestAuditLogger:
         assert history[0]["action"] == "update"
         assert history[1]["action"] == "create"
 
-    def test_get_entity_history_filters_by_entity(self, db, as_test_user):
+    def test_get_entity_history_filters_by_entity(self, db, as_test_workspace):
         """History only for requested entity."""
         from core.audit import AuditLogger, AuditAction
 
@@ -237,8 +216,8 @@ class TestAuditLogger:
         assert history_a[0]["entity_id"] == entity_a
         assert history_b[0]["entity_id"] == entity_b
 
-    def test_get_user_activity_respects_limit(self, db, as_test_user):
-        """Activity limited to specified count."""
+    def test_get_workspace_activity_respects_limit(self, db, as_test_workspace):
+        """Workspace activity is limited to the requested count."""
         from core.audit import AuditLogger, AuditAction
 
         logger = AuditLogger(db)
@@ -252,38 +231,6 @@ class TestAuditLogger:
                 changes={"created": {"index": i}}
             )
 
-        activity = logger.get_user_activity(limit=3)
+        activity = logger.get_workspace_activity(limit=3)
 
         assert len(activity) == 3
-
-    def test_get_user_activity_filters_by_user(self, db, as_test_user, as_test_user_b, test_user_id, test_user_b_id):
-        """Activity only for requested user."""
-        from core.audit import AuditLogger, AuditAction
-
-        logger = AuditLogger(db)
-
-        # User A creates entry
-        logger.log_change(
-            entity_type="customer",
-            entity_id=uuid4(),
-            action=AuditAction.CREATE,
-            changes={"created": {}},
-            user_id=test_user_id
-        )
-
-        # User B creates entry
-        logger.log_change(
-            entity_type="customer",
-            entity_id=uuid4(),
-            action=AuditAction.CREATE,
-            changes={"created": {}},
-            user_id=test_user_b_id
-        )
-
-        activity_a = logger.get_user_activity(user_id=test_user_id)
-        activity_b = logger.get_user_activity(user_id=test_user_b_id)
-
-        assert len(activity_a) == 1
-        assert len(activity_b) == 1
-        assert activity_a[0]["user_id"] == test_user_id
-        assert activity_b[0]["user_id"] == test_user_b_id

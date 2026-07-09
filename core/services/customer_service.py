@@ -12,8 +12,9 @@ from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
 from core.event_bus import EventBus
 from core.events import CustomerCreated
+from core.exceptions import NotFoundError
 from core.models import Customer, CustomerCreate, CustomerUpdate
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -45,14 +46,14 @@ class CustomerService:
         Returns:
             Created customer
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         customer_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO customers (
-                id, user_id, first_name, last_name, business_name,
+                id, workspace_id, first_name, last_name, business_name,
                 email, phone, address, notes,
                 preferred_contact_method, preferred_time_of_day,
                 reference_id, referred_by, created_at, updated_at
@@ -65,7 +66,7 @@ class CustomerService:
             RETURNING *
             """,
             (
-                customer_id, user_id, data.first_name, data.last_name, data.business_name,
+                customer_id, workspace_id, data.first_name, data.last_name, data.business_name,
                 data.email, data.phone, data.address, data.notes,
                 data.preferred_contact_method, data.preferred_time_of_day,
                 data.reference_id, data.referred_by, now, now
@@ -123,7 +124,7 @@ class CustomerService:
         # Get current state for audit
         current = self.get_by_id(customer_id)
         if current is None:
-            raise ValueError(f"Customer {customer_id} not found")
+            raise NotFoundError(f"Customer {customer_id} not found")
 
         # Build SET clause from non-None fields
         updates = data.model_dump(exclude_none=True)
@@ -239,7 +240,7 @@ class CustomerService:
 
         return [Customer.model_validate(row) for row in rows]
 
-    def search(self, query: str, limit: int = 20) -> list[Customer]:
+    def search(self, query: str, limit: int = 20, offset: int = 0) -> list[Customer]:
         """
         Search customers by name, email, or phone.
 
@@ -248,6 +249,7 @@ class CustomerService:
         Args:
             query: Search string
             limit: Maximum results
+            offset: Offset for pagination
 
         Returns:
             Matching customers
@@ -264,9 +266,9 @@ class CustomerService:
                OR email ILIKE %s
                OR phone ILIKE %s)
             ORDER BY created_at DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
-            (pattern, pattern, pattern, pattern, pattern, limit)
+            (pattern, pattern, pattern, pattern, pattern, limit, offset)
         )
 
         return [Customer.model_validate(row) for row in rows]

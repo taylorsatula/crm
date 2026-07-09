@@ -49,7 +49,7 @@ class Customer(BaseModel):
     """Full customer entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     first_name: str | None
     last_name: str | None
     business_name: str | None

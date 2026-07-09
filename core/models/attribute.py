@@ -24,7 +24,7 @@ class Attribute(BaseModel):
     """Full attribute entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     customer_id: UUID
     key: str
     value: Any

@@ -1,11 +1,11 @@
 """
-PostgreSQL client with connection pooling and RLS user isolation.
+PostgreSQL client with connection pooling and RLS workspace isolation.
 
-Uses psycopg3 with ConnectionPool. User isolation enforced via
-PostgreSQL Row Level Security - automatically reads user ID from contextvar
-and sets app.current_user_id on each connection.
+Uses psycopg3 with ConnectionPool. Workspace isolation enforced via
+PostgreSQL Row Level Security - automatically reads workspace ID from contextvar
+and sets app.current_workspace_id on each connection.
 
-Security: No user context = see nothing (RLS blocks all rows). This is safe.
+Security: No workspace context = see nothing (RLS blocks all rows). This is safe.
 True admin bypass requires connecting as crm_admin with BYPASSRLS.
 """
 
@@ -17,7 +17,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from utils.user_context import _current_user_id
+from utils.workspace_context import _current_workspace_id
 
 logger = logging.getLogger(__name__)
 
@@ -26,18 +26,18 @@ class PostgresClient:
     """
     PostgreSQL client with automatic RLS context from contextvar.
 
-    User context is read from utils.user_context contextvar on each query.
-    - User context set → sees only their data (RLS filtered)
-    - No user context → sees nothing (RLS blocks all rows)
+    Workspace context is read from utils.workspace_context contextvar on each query.
+    - Workspace context set → sees only their data (RLS filtered)
+    - No workspace context → sees nothing (RLS blocks all rows)
 
     Usage:
         db = PostgresClient(database_url)
 
-        # With user context (normal request flow)
-        with user_context(user_id):
-            contacts = db.execute("SELECT * FROM contacts")  # User's data only
+        # With workspace context (normal request flow)
+        with workspace_context(workspace_id):
+            contacts = db.execute("SELECT * FROM contacts")  # Workspace data only
 
-        # Without user context
+        # Without workspace context
         contacts = db.execute("SELECT * FROM contacts")  # Empty - RLS blocks
     """
 
@@ -69,20 +69,20 @@ class PostgresClient:
         pool = self._connection_pools[self._database_url]
 
         with pool.connection() as conn:
-            user_id = _current_user_id.get()
+            workspace_id = _current_workspace_id.get()
 
             with conn.cursor() as cur:
-                if user_id is not None:
+                if workspace_id is not None:
                     # SET doesn't support parameter placeholders, use sql.Literal for safe value injection
                     cur.execute(
-                        sql.SQL("SET app.current_user_id = {}").format(
-                            sql.Literal(str(user_id))
+                        sql.SQL("SET app.current_workspace_id = {}").format(
+                            sql.Literal(str(workspace_id))
                         )
                     )
                 else:
                     # Set to empty string to clear context
-                    # RLS policies use ::uuid cast which fails on empty string = no rows
-                    cur.execute("SET app.current_user_id = ''")
+                    # RLS policies convert an empty setting to NULL, so no tenant rows match.
+                    cur.execute("SET app.current_workspace_id = ''")
 
             yield conn
 

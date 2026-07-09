@@ -71,15 +71,11 @@ class ErrorCodes:
     """
     Standard error codes for consistent error handling.
 
-    See docs/ERROR_CODES.md for complete documentation including
-    when to use each code and client handling guidance.
+    Keep codes aligned with the private service contract.
     """
 
-    # Authentication & Authorization
+    # Internal service boundary
     NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
-    SESSION_EXPIRED = "SESSION_EXPIRED"
-    INVALID_TOKEN = "INVALID_TOKEN"
-    RATE_LIMITED = "RATE_LIMITED"
 
     # Resource Errors
     NOT_FOUND = "NOT_FOUND"

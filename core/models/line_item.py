@@ -19,6 +19,7 @@ class LineItemCreate(BaseModel):
     unit_price_cents: int | None = Field(None, ge=0)
     total_price_cents: int | None = Field(None, ge=0)
     duration_minutes: int | None = Field(None, ge=0)
+    notes: str | None = Field(None, max_length=1000)
 
     @model_validator(mode="after")
     def compute_total_if_missing(self) -> "LineItemCreate":
@@ -36,20 +37,22 @@ class LineItemUpdate(BaseModel):
     unit_price_cents: int | None = Field(None, ge=0)
     total_price_cents: int | None = Field(None, ge=0)
     duration_minutes: int | None = Field(None, ge=0)
+    notes: str | None = Field(None, max_length=1000)
 
 
 class LineItem(BaseModel):
     """Full line item entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     ticket_id: UUID
     service_id: UUID
     description: str | None
     quantity: int
     unit_price_cents: int | None
-    total_price_cents: int
+    total_price_cents: int | None
     duration_minutes: int | None
+    notes: str | None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None
@@ -57,6 +60,6 @@ class LineItem(BaseModel):
     model_config = {"from_attributes": True}
 
     @property
-    def total_price_dollars(self) -> float:
+    def total_price_dollars(self) -> float | None:
         """Total price in dollars for display."""
-        return self.total_price_cents / 100
+        return self.total_price_cents / 100 if self.total_price_cents is not None else None

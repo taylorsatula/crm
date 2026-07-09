@@ -64,12 +64,12 @@ def mock_extractor():
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(first_name="Handler", last_name="Test"))
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     from core.models import AddressCreate
     return address_service.create(AddressCreate(
         customer_id=test_customer.id,
@@ -78,7 +78,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 
 @pytest.fixture
-def test_ticket(as_test_user, ticket_service, test_customer, test_address):
+def test_ticket(as_test_workspace, ticket_service, test_customer, test_address):
     return ticket_service.create(TicketCreate(
         customer_id=test_customer.id,
         address_id=test_address.id,
@@ -94,7 +94,7 @@ def handler(mock_extractor, attribute_service, note_service):
 class TestTicketCompletionHandler:
 
     def test_extracts_and_persists_attributes_from_note(
-        self, db, as_test_user, handler, mock_extractor,
+        self, db, as_test_workspace, handler, mock_extractor,
         note_service, attribute_service,
         test_customer, test_ticket
     ):
@@ -133,7 +133,7 @@ class TestTicketCompletionHandler:
         assert updated_note.processed_at is not None
 
     def test_processes_multiple_notes_and_marks_each_processed(
-        self, db, as_test_user, handler, mock_extractor,
+        self, db, as_test_workspace, handler, mock_extractor,
         note_service, test_customer, test_ticket
     ):
         note_1 = note_service.create(NoteCreate(
@@ -158,7 +158,7 @@ class TestTicketCompletionHandler:
         assert note_service.get_by_id(note_2.id).processed_at is not None
 
     def test_skips_already_processed_notes(
-        self, db, as_test_user, handler, mock_extractor,
+        self, db, as_test_workspace, handler, mock_extractor,
         note_service, test_ticket
     ):
         """Already-processed notes are excluded at the SQL level."""
@@ -182,7 +182,7 @@ class TestTicketCompletionHandler:
         mock_extractor.extract_attributes.assert_called_once_with("Still fresh")
 
     def test_no_notes_does_not_call_extractor(
-        self, db, as_test_user, handler, mock_extractor, test_ticket
+        self, db, as_test_workspace, handler, mock_extractor, test_ticket
     ):
         event = TicketCompleted(ticket=test_ticket)
         handler(event)
@@ -190,7 +190,7 @@ class TestTicketCompletionHandler:
         mock_extractor.extract_attributes.assert_not_called()
 
     def test_empty_extraction_still_marks_note_processed(
-        self, db, as_test_user, handler, mock_extractor,
+        self, db, as_test_workspace, handler, mock_extractor,
         note_service, test_ticket
     ):
         note = note_service.create(NoteCreate(

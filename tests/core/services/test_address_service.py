@@ -25,7 +25,7 @@ def customer_service(db, event_bus):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer, delete after test."""
     from core.models import CustomerCreate
 
@@ -37,7 +37,7 @@ def test_customer(as_test_user, customer_service):
 class TestAddressCreate:
     """Tests for AddressService.create."""
 
-    def test_creates_address(self, db, as_test_user, address_service, test_customer):
+    def test_creates_address(self, db, as_test_workspace, address_service, test_customer):
         """Creates address with provided data."""
         from core.models import AddressCreate
 
@@ -55,8 +55,8 @@ class TestAddressCreate:
         assert address.city == "Austin"
         assert address.customer_id == test_customer.id
 
-    def test_sets_user_id_from_context(self, db, as_test_user, test_user_id, address_service, test_customer):
-        """user_id comes from context."""
+    def test_sets_workspace_id_from_context(self, db, as_test_workspace, test_workspace_id, address_service, test_customer):
+        """workspace_id comes from context."""
         from core.models import AddressCreate
 
         data = AddressCreate(
@@ -69,9 +69,9 @@ class TestAddressCreate:
 
         address = address_service.create(data)
 
-        assert address.user_id == test_user_id
+        assert address.workspace_id == test_workspace_id
 
-    def test_creates_with_optional_fields(self, db, as_test_user, address_service, test_customer):
+    def test_creates_with_optional_fields(self, db, as_test_workspace, address_service, test_customer):
         """Creates address with label and notes."""
         from core.models import AddressCreate
 
@@ -92,7 +92,7 @@ class TestAddressCreate:
         assert address.label == "Office"
         assert address.notes == "Gate code: 1234"
 
-    def test_is_primary_defaults_false(self, db, as_test_user, address_service, test_customer):
+    def test_is_primary_defaults_false(self, db, as_test_workspace, address_service, test_customer):
         """is_primary defaults to False."""
         from core.models import AddressCreate
 
@@ -108,7 +108,7 @@ class TestAddressCreate:
 
         assert address.is_primary is False
 
-    def test_can_set_is_primary(self, db, as_test_user, address_service, test_customer):
+    def test_can_set_is_primary(self, db, as_test_workspace, address_service, test_customer):
         """Can create primary address."""
         from core.models import AddressCreate
 
@@ -129,7 +129,7 @@ class TestAddressCreate:
 class TestAddressGetById:
     """Tests for AddressService.get_by_id."""
 
-    def test_returns_address_when_exists(self, db, as_test_user, address_service, test_customer):
+    def test_returns_address_when_exists(self, db, as_test_workspace, address_service, test_customer):
         """Get by ID returns address."""
         from core.models import AddressCreate
 
@@ -147,7 +147,7 @@ class TestAddressGetById:
         assert found is not None
         assert found.id == created.id
 
-    def test_returns_none_for_nonexistent(self, db, as_test_user, address_service):
+    def test_returns_none_for_nonexistent(self, db, as_test_workspace, address_service):
         """Missing ID returns None."""
         result = address_service.get_by_id(uuid4())
         assert result is None
@@ -156,7 +156,7 @@ class TestAddressGetById:
 class TestAddressListForCustomer:
     """Tests for AddressService.list_for_customer."""
 
-    def test_returns_customer_addresses(self, db, as_test_user, address_service, test_customer):
+    def test_returns_customer_addresses(self, db, as_test_workspace, address_service, test_customer):
         """List returns addresses for customer."""
         from core.models import AddressCreate
 
@@ -179,7 +179,7 @@ class TestAddressListForCustomer:
 
         assert len(addresses) == 2
 
-    def test_excludes_other_customers(self, db, as_test_user, address_service, customer_service):
+    def test_excludes_other_customers(self, db, as_test_workspace, address_service, customer_service):
         """Only returns addresses for specified customer."""
         from core.models import CustomerCreate, AddressCreate
 
@@ -217,7 +217,7 @@ class TestAddressListForCustomer:
 class TestAddressUpdate:
     """Tests for AddressService.update."""
 
-    def test_updates_fields(self, db, as_test_user, address_service, test_customer):
+    def test_updates_fields(self, db, as_test_workspace, address_service, test_customer):
         """Updates specified fields."""
         from core.models import AddressCreate, AddressUpdate
 
@@ -238,7 +238,7 @@ class TestAddressUpdate:
 class TestAddressDelete:
     """Tests for AddressService.delete."""
 
-    def test_hard_deletes(self, db, db_admin, as_test_user, address_service, test_customer):
+    def test_hard_deletes(self, db, as_test_workspace, address_service, test_customer):
         """Addresses are hard deleted (not soft)."""
         from core.models import AddressCreate
 
@@ -252,8 +252,8 @@ class TestAddressDelete:
 
         address_service.delete(address.id)
 
-        # Should be completely gone
-        rows = db_admin.execute(
+        # Should be completely gone (visible within the same transaction)
+        rows = db.execute(
             "SELECT * FROM addresses WHERE id = %s",
             (address.id,)
         )

@@ -3,11 +3,11 @@ Universal audit trail for all entity changes.
 
 Every mutation to every entity is logged here. The audit log is:
 - Append-only (entries never modified or deleted)
-- User-attributed (who made the change)
+- Workspace-attributed (which tenant made the change)
 - Detailed (captures old and new values)
 
-The audit_log table has NO RLS - all audit entries are visible regardless of
-user context. This is intentional for administrative oversight.
+Audit records are tenant scoped through the same workspace RLS policy as CRM
+business data.
 """
 
 from enum import Enum
@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from typing import Any
 
 from clients.postgres_client import PostgresClient
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 
@@ -112,7 +112,6 @@ class AuditLogger:
         entity_id: UUID,
         action: AuditAction,
         changes: dict[str, Any],
-        user_id: UUID | None = None
     ) -> None:
         """
         Log an entity change.
@@ -122,7 +121,6 @@ class AuditLogger:
             entity_id: ID of the entity
             action: The action performed (CREATE, UPDATE, DELETE)
             changes: The changes made (format depends on action)
-            user_id: User who made change (defaults to current context)
 
         Changes format by action:
         - CREATE: {"created": {full entity data}}
@@ -131,18 +129,16 @@ class AuditLogger:
         """
         from psycopg.types.json import Json
 
-        if user_id is None:
-            user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
 
-        # audit_log has NO RLS so regular execute() works
         self.postgres.execute(
             """
-            INSERT INTO audit_log (id, user_id, entity_type, entity_id, action, changes, created_at)
+            INSERT INTO audit_log (id, workspace_id, entity_type, entity_id, action, changes, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 uuid4(),
-                user_id,
+                workspace_id,
                 entity_type,
                 entity_id,
                 action.value,
@@ -168,7 +164,7 @@ class AuditLogger:
         """
         return self.postgres.execute(
             """
-            SELECT id, user_id, entity_type, entity_id, action, changes, created_at
+            SELECT id, workspace_id, entity_type, entity_id, action, changes, created_at
             FROM audit_log
             WHERE entity_type = %s AND entity_id = %s
             ORDER BY created_at DESC
@@ -176,31 +172,31 @@ class AuditLogger:
             (entity_type, entity_id)
         )
 
-    def get_user_activity(
+    def get_workspace_activity(
         self,
-        user_id: UUID | None = None,
+        workspace_id: UUID | None = None,
         limit: int = 100
     ) -> list[dict[str, Any]]:
         """
-        Get recent activity by user.
+        Get recent activity by workspace.
 
         Args:
-            user_id: User to get activity for (defaults to current context)
+            workspace_id: Workspace to get activity for (defaults to current context)
             limit: Maximum entries to return
 
         Returns:
             List of audit entries, newest first.
         """
-        if user_id is None:
-            user_id = get_current_user_id()
+        if workspace_id is None:
+            workspace_id = get_current_workspace_id()
 
         return self.postgres.execute(
             """
-            SELECT id, user_id, entity_type, entity_id, action, changes, created_at
+            SELECT id, workspace_id, entity_type, entity_id, action, changes, created_at
             FROM audit_log
-            WHERE user_id = %s
+            WHERE workspace_id = %s
             ORDER BY created_at DESC
             LIMIT %s
             """,
-            (user_id, limit)
+            (workspace_id, limit)
         )

@@ -10,8 +10,9 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.exceptions import NotFoundError
 from core.models import Service, ServiceCreate, ServiceUpdate
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -40,14 +41,14 @@ class CatalogService:
         Returns:
             Created service
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         service_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO services (
-                id, user_id, name, description,
+                id, workspace_id, name, description,
                 pricing_type, default_price_cents, unit_price_cents, unit_label,
                 is_active, display_order, created_at, updated_at
             ) VALUES (
@@ -58,7 +59,7 @@ class CatalogService:
             RETURNING *
             """,
             (
-                service_id, user_id, data.name, data.description,
+                service_id, workspace_id, data.name, data.description,
                 data.pricing_type.value, data.default_price_cents, data.unit_price_cents, data.unit_label,
                 data.is_active, data.display_order, now, now
             )
@@ -145,7 +146,7 @@ class CatalogService:
         """
         current = self.get_by_id(service_id)
         if current is None:
-            raise ValueError(f"Service {service_id} not found")
+            raise NotFoundError(f"Service {service_id} not found")
 
         updates = data.model_dump(exclude_none=True)
         if not updates:

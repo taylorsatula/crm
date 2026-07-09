@@ -1,61 +1,52 @@
-"""Tests for FastAPI application assembly."""
+"""Tests for private CRM service assembly."""
 
-from pathlib import Path
+from uuid import uuid4
 
 from starlette.testclient import TestClient
 
+from config import AppConfig
 from core.event_bus import EventBus
-from main import FRONTEND_NO_CACHE_HEADERS, create_app, wire_event_handlers
+from main import create_app, wire_event_handlers
 
 
 class FakeService:
-    pass
+    def health_check(self):
+        return True
 
 
-class FakeSessionManager:
-    def validate_session(self, token: str):
-        raise AssertionError("no authenticated routes are exercised in this test")
+class FakeDatabase(FakeService):
+    def __init__(self):
+        self.closed = False
 
+    def close(self):
+        self.closed = True
 
-class FakeAccessTokenManager:
-    def validate_token(self, token: str):
-        raise AssertionError("no authenticated routes are exercised in this test")
+    def execute(self, query, params=None):
+        return []
 
 
 class FakeContainer:
     def __init__(self):
-        self.closed = False
-        self.session_manager = FakeSessionManager()
-        self.access_token_manager = FakeAccessTokenManager()
+        self.database = FakeDatabase()
         self.event_bus = EventBus()
-        self.health_checks = {
-            "database": FakeService(),
-            "cache": FakeService(),
+        self.services = {name: FakeService() for name in (
+            "customer", "ticket", "catalog", "line_item", "invoice", "note",
+            "attribute", "message", "address",
+        )}
+        self.clients = {
+            "database": self.database,
             "vault": FakeService(),
             "llm": FakeService(),
             "email": FakeService(),
         }
-        self.services = {
-            "customer": FakeService(),
-            "ticket": FakeService(),
-            "catalog": FakeService(),
-            "line_item": FakeService(),
-            "invoice": FakeService(),
-            "note": FakeService(),
-            "attribute": FakeService(),
-            "message": FakeService(),
-            "address": FakeService(),
-        }
-        self.auth_service = FakeService()
-        self.auth_components = {
-            "session_manager": self.session_manager,
-            "access_token_manager": self.access_token_manager,
-        }
-        self.clients = {}
+        self.health_checks = self.clients
         self.event_handlers = {}
+        self.internal_service_secret = "assembly-secret"
+        self.closed = False
 
     def close(self):
         self.closed = True
+        self.database.close()
 
 
 class RecordingFactory:
@@ -68,93 +59,47 @@ class RecordingFactory:
         return self.container
 
 
-def test_create_app_registers_phase_5_routes():
+def _headers():
+    return {
+        "Authorization": "Bearer assembly-secret",
+        "X-Workspace-ID": str(uuid4()),
+        "X-Workspace-Timezone": "UTC",
+    }
+
+
+def test_private_service_registers_only_domain_workspace_and_health_routes():
     app = create_app(container_factory=RecordingFactory())
     route_paths = {route.path for route in app.routes}
-
-    assert {
-        "/",
-        "/health",
-        "/health/ready",
-        "/health/live",
-        "/api/data",
-        "/api/actions",
-        "/auth/request-link",
-        "/auth/me",
-    }.issubset(route_paths)
+    assert {"/health", "/health/ready", "/health/live", "/api/data", "/api/actions", "/api/workspace/provision", "/api/workspace"}.issubset(route_paths)
+    assert "/" not in route_paths
+    assert all(not path.startswith("/auth") for path in route_paths)
+    assert "/docs" not in route_paths
 
 
-def test_lifespan_factory_sets_app_state_and_closes_container():
+def test_lifespan_sets_state_and_closes_container():
     factory = RecordingFactory()
-    app = create_app(container_factory=factory)
-
-    with TestClient(app):
+    with TestClient(create_app(container_factory=factory)) as client:
         assert factory.calls == 1
-        assert app.state.container is factory.container
-        assert app.state.services is factory.container.services
-        assert app.state.auth_service is factory.container.auth_service
+        assert client.app.state.container is factory.container
+        assert client.app.state.services is factory.container.services
         assert factory.container.closed is False
-
     assert factory.container.closed is True
+    assert factory.container.database.closed is True
+
+
+def test_legacy_public_routes_are_absent_when_authenticated():
+    app = create_app(container_factory=RecordingFactory())
+    with TestClient(app) as client:
+        for path in ("/", "/auth/me", "/assets/js/app.js", "/docs", "/openapi.json"):
+            assert client.get(path, headers=_headers()).status_code == 404
 
 
 def test_event_bus_subscriptions_are_wired():
     event_bus = EventBus()
-    services = {
-        "attribute": FakeService(),
-        "note": FakeService(),
-        "message": FakeService(),
-    }
-    handlers = wire_event_handlers(event_bus, FakeService(), services)
-
+    handlers = wire_event_handlers(event_bus, FakeService(), {"attribute": FakeService(), "note": FakeService(), "message": FakeService()})
     assert set(handlers) == {"TicketCompleted", "TicketCancelled", "InvoicePaid"}
-    assert {name: len(callbacks) for name, callbacks in event_bus._subscribers.items()} == {
-        "TicketCompleted": 1,
-        "TicketCancelled": 1,
-        "InvoicePaid": 1,
-    }
 
 
-def test_assets_are_public_and_served_from_static():
-    factory = RecordingFactory()
-    app = create_app(container_factory=factory)
-    client = TestClient(app)
-    static_file = Path(__file__).resolve().parents[1] / "static" / "health.txt"
-
-    assert static_file.read_text().strip() == "assets-ok"
-    response = client.get("/assets/health.txt")
-    conditional_response = client.get(
-        "/assets/health.txt",
-        headers={"If-None-Match": response.headers["etag"]},
-    )
-
-    assert response.status_code == 200
-    assert response.text.strip() == "assets-ok"
-    for header, value in FRONTEND_NO_CACHE_HEADERS.items():
-        assert response.headers[header] == value
-        assert conditional_response.headers[header] == value
-    assert conditional_response.status_code == 200
-    assert conditional_response.text.strip() == "assets-ok"
-
-
-def test_root_app_shell_is_public_html():
-    factory = RecordingFactory()
-    app = create_app(container_factory=factory)
-
-    response = TestClient(app).get("/")
-
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    for header, value in FRONTEND_NO_CACHE_HEADERS.items():
-        assert response.headers[header] == value
-    assert '<script type="module" src="/assets/js/app.js"></script>' in response.text
-
-
-def test_protected_api_stays_protected_without_session():
-    factory = RecordingFactory()
-    app = create_app(container_factory=factory)
-
-    response = TestClient(app).get("/api/data", params={"type": "customers"})
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "NOT_AUTHENTICATED"
+def test_docs_can_only_be_enabled_explicitly_for_private_development():
+    app = create_app(container_factory=RecordingFactory(), config=AppConfig(expose_docs=True))
+    assert "/docs" in {route.path for route in app.routes}

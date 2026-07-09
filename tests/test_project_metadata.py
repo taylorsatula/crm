@@ -35,7 +35,6 @@ def test_pyproject_declares_runtime_dependencies():
         "pydantic[email]",
         "psycopg[binary]",
         "psycopg-pool",
-        "redis",
         "hvac",
         "requests",
         "openai",

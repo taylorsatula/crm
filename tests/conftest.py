@@ -1,171 +1,235 @@
-"""Shared test fixtures for CRM test suite."""
+"""Shared fixtures for the workspace-scoped CRM test suite."""
+
+from pathlib import Path
+from uuid import UUID
 
 import pytest
-from uuid import UUID
-from pathlib import Path
-
 from dotenv import load_dotenv
 
-# Load .env file BEFORE any other imports that might use env vars
-# override=True ensures .env takes precedence over shell env vars
 load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 
-# Reset vault client singleton to pick up env vars
 import clients.vault_client as vault_module
+
 vault_module._vault_client_instance = None
 vault_module._secret_cache.clear()
 
-from utils.user_context import user_context, clear_current_user_id
+from utils.workspace_context import clear_workspace_context, workspace_context
 
-
-# =============================================================================
-# TEST USER CONSTANTS
-# =============================================================================
-
-# Primary test user - use for single-user tests
-TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
-TEST_USER_EMAIL = "testuser@test.local"
-
-# Secondary test user - use for RLS isolation tests
-TEST_USER_B_ID = UUID("00000000-0000-0000-0000-000000000002")
-TEST_USER_B_EMAIL = "testuser-b@test.local"
-
-
-# =============================================================================
-# USER CONTEXT FIXTURES
-# =============================================================================
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
+TEST_WORKSPACE_B_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 @pytest.fixture(autouse=True)
-def reset_user_context():
-    """Ensure clean user context before and after each test."""
-    clear_current_user_id()
+def reset_workspace_context():
+    clear_workspace_context()
     yield
-    clear_current_user_id()
+    clear_workspace_context()
 
 
 @pytest.fixture
-def test_user_id() -> UUID:
-    """The primary test user's ID."""
-    return TEST_USER_ID
+def test_workspace_id() -> UUID:
+    return TEST_WORKSPACE_ID
 
 
 @pytest.fixture
-def test_user_b_id() -> UUID:
-    """The secondary test user's ID (for isolation tests)."""
-    return TEST_USER_B_ID
+def test_workspace_b_id() -> UUID:
+    return TEST_WORKSPACE_B_ID
 
 
 @pytest.fixture
-def authenticated_context(test_user_id):
-    """Provide an authenticated user context for the primary test user."""
-    with user_context(test_user_id):
-        yield test_user_id
-
-
-# =============================================================================
-# DATABASE FIXTURES
-# =============================================================================
-
-
-@pytest.fixture
-def event_bus():
-    """Fresh EventBus for each test — no cross-test handler leakage."""
-    from core.event_bus import EventBus
-    return EventBus()
-
-
-@pytest.fixture(scope="session")
-def db():
-    """Session-scoped PostgresClient (application user, RLS enforced)."""
-    from clients.postgres_client import PostgresClient
-    from clients.vault_client import get_database_url
-
-    client = PostgresClient(get_database_url())
-    yield client
-    client.close()
-
-
-@pytest.fixture(scope="session")
-def db_admin():
-    """Session-scoped admin PostgresClient (bypasses RLS, for test setup/teardown)."""
-    from clients.postgres_client import PostgresClient
-    from clients.vault_client import VaultClient
-
-    vault = VaultClient()
-    admin_url = vault.get_secret("database", "admin_url")
-    client = PostgresClient(admin_url)
-    yield client
-    client.close()
+def authenticated_context(test_workspace_id):
+    with workspace_context(test_workspace_id, "America/Chicago"):
+        yield test_workspace_id
 
 
 @pytest.fixture(scope="session")
 def db_url():
-    """Database URL from Vault."""
     from clients.vault_client import get_database_url
+
     return get_database_url()
+
+
+@pytest.fixture
+def db(db_url):
+    """Transactional application connection that applies workspace RLS per query."""
+    from psycopg import sql
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+    from utils.workspace_context import _current_workspace_id
+
+    pool = ConnectionPool(conninfo=db_url, min_size=1, max_size=2, open=True)
+    with pool.connection() as conn:
+        conn.autocommit = False
+        with conn.transaction():
+            def _apply_rls(cur):
+                workspace_id = _current_workspace_id.get()
+                if workspace_id is None:
+                    cur.execute("SET app.current_workspace_id = ''")
+                else:
+                    cur.execute(
+                        sql.SQL("SET app.current_workspace_id = {}").format(
+                            sql.Literal(str(workspace_id))
+                        )
+                    )
+
+            class TestDb:
+                def execute(self, query, params=None):
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        _apply_rls(cur)
+                        cur.execute(query, params)
+                        if cur.description:
+                            return [dict(row) for row in cur.fetchall()]
+                        return []
+
+                def execute_single(self, query, params=None):
+                    results = self.execute(query, params)
+                    return results[0] if results else None
+
+                def execute_scalar(self, query, params=None):
+                    with conn.cursor() as cur:
+                        _apply_rls(cur)
+                        cur.execute(query, params)
+                        row = cur.fetchone()
+                        return row[0] if row else None
+
+                def execute_returning(self, query, params=None):
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        _apply_rls(cur)
+                        cur.execute(query, params)
+                        return [dict(row) for row in cur.fetchall()]
+
+            yield TestDb()
+    pool.close()
+
+
+@pytest.fixture(scope="session")
+def db_admin(db_url):
+    from clients.postgres_client import PostgresClient
+    from clients.vault_client import VaultClient
+
+    vault = VaultClient()
+    client = PostgresClient(vault.get_secret("database", "admin_url"))
+    yield client
+    client.close()
 
 
 @pytest.fixture(autouse=True)
 def reset_db_state(request):
-    """Reset database state before each test using admin connection."""
     if "db" not in request.fixturenames and "db_admin" not in request.fixturenames:
         yield
         return
 
     db_admin = request.getfixturevalue("db_admin")
-    if db_admin is None:
-        yield
-        return
-
-    # Truncate user-scoped tables (CASCADE handles foreign keys)
-    # Also truncate audit_log for test isolation (despite being append-only in prod)
-    db_admin.execute("""
-        TRUNCATE
-            customers, addresses, services, tickets, ticket_technicians,
-            line_items, invoices, notes, attributes, scheduled_messages,
-            waitlist, leads, recurring_templates, recurring_template_services,
-            model_authorization_queue, audit_log
-        CASCADE
-    """)
-
-    # Ensure test users exist
-    db_admin.execute("""
-        INSERT INTO users (id, email, created_at, updated_at)
-        VALUES
-            (%s, %s, now(), now()),
-            (%s, %s, now(), now())
-        ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email
-    """, (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_B_ID, TEST_USER_B_EMAIL))
-
+    db_admin.execute("DELETE FROM workspaces WHERE id IN (%s, %s)", (TEST_WORKSPACE_ID, TEST_WORKSPACE_B_ID))
+    db_admin.execute(
+        "INSERT INTO workspaces (id) VALUES (%s), (%s)",
+        (TEST_WORKSPACE_ID, TEST_WORKSPACE_B_ID),
+    )
     yield
 
 
 @pytest.fixture
-def as_test_user(test_user_id):
-    """Context manager that sets primary test user context."""
-    with user_context(test_user_id):
-        yield test_user_id
+def as_test_workspace(test_workspace_id):
+    with workspace_context(test_workspace_id, "America/Chicago"):
+        yield test_workspace_id
 
 
 @pytest.fixture
-def as_test_user_b(test_user_b_id):
-    """Context manager that sets secondary test user context."""
-    with user_context(test_user_b_id):
-        yield test_user_b_id
+def as_test_workspace_b(test_workspace_b_id):
+    with workspace_context(test_workspace_b_id, "America/Chicago"):
+        yield test_workspace_b_id
 
 
-# =============================================================================
-# VALKEY FIXTURES
-# =============================================================================
+@pytest.fixture
+def event_bus():
+    from core.event_bus import EventBus
+
+    return EventBus()
 
 
-@pytest.fixture(scope="session")
-def valkey():
-    """Session-scoped ValkeyClient."""
-    from clients.valkey_client import ValkeyClient
-    from clients.vault_client import get_valkey_url
+@pytest.fixture
+def audit(db):
+    from core.audit import AuditLogger
 
-    client = ValkeyClient(get_valkey_url())
-    yield client
-    client.close()
+    return AuditLogger(db)
+
+
+@pytest.fixture
+def customer_service(db, audit, event_bus):
+    from core.services.customer_service import CustomerService
+
+    return CustomerService(db, audit, event_bus)
+
+
+@pytest.fixture
+def ticket_service(db, audit, event_bus):
+    from core.services.ticket_service import TicketService
+
+    return TicketService(db, audit, event_bus)
+
+
+@pytest.fixture
+def catalog_service(db, audit):
+    from core.services.catalog_service import CatalogService
+
+    return CatalogService(db, audit)
+
+
+@pytest.fixture
+def line_item_service(db, audit):
+    from core.services.line_item_service import LineItemService
+
+    return LineItemService(db, audit)
+
+
+@pytest.fixture
+def invoice_service(db, audit, event_bus):
+    from core.services.invoice_service import InvoiceService
+
+    return InvoiceService(db, audit, event_bus)
+
+
+@pytest.fixture
+def note_service(db, audit, event_bus):
+    from core.services.note_service import NoteService
+
+    return NoteService(db, audit, event_bus)
+
+
+@pytest.fixture
+def attribute_service(db, audit):
+    from core.services.attribute_service import AttributeService
+
+    return AttributeService(db, audit)
+
+
+@pytest.fixture
+def message_service(db, audit):
+    from core.services.message_service import MessageService
+
+    return MessageService(db, audit)
+
+
+@pytest.fixture
+def address_service(db, audit):
+    from core.services.address_service import AddressService
+
+    return AddressService(db, audit)
+
+
+@pytest.fixture
+def services(
+    customer_service, ticket_service, catalog_service, line_item_service,
+    invoice_service, note_service, attribute_service, message_service, address_service,
+):
+    return {
+        "customer": customer_service,
+        "ticket": ticket_service,
+        "catalog": catalog_service,
+        "line_item": line_item_service,
+        "invoice": invoice_service,
+        "note": note_service,
+        "attribute": attribute_service,
+        "message": message_service,
+        "address": address_service,
+    }

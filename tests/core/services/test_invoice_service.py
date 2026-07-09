@@ -63,7 +63,7 @@ def catalog_service(db):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
 
@@ -73,7 +73,7 @@ def test_customer(as_test_user, customer_service):
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     """Create a test address."""
     from core.models import AddressCreate
 
@@ -87,7 +87,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 
 @pytest.fixture
-def test_service(as_test_user, catalog_service):
+def test_service(as_test_workspace, catalog_service):
     """Create a test service in the catalog."""
     from core.models import ServiceCreate, PricingType
 
@@ -101,7 +101,7 @@ def test_service(as_test_user, catalog_service):
 
 
 @pytest.fixture
-def test_ticket_with_items(as_test_user, ticket_service, line_item_service, test_customer, test_address, test_service):
+def test_ticket_with_items(as_test_workspace, ticket_service, line_item_service, test_customer, test_address, test_service):
     """Create a test ticket with line items."""
     from core.models import TicketCreate, LineItemCreate
 
@@ -131,7 +131,7 @@ def test_ticket_with_items(as_test_user, ticket_service, line_item_service, test
 class TestInvoiceCreate:
     """Tests for InvoiceService.create_from_ticket."""
 
-    def test_creates_invoice_from_ticket(self, db, as_test_user, invoice_service, test_ticket_with_items, test_customer):
+    def test_creates_invoice_from_ticket(self, db, as_test_workspace, invoice_service, test_ticket_with_items, test_customer):
         """Creates invoice from ticket line items."""
         from core.models import InvoiceStatus
 
@@ -149,7 +149,7 @@ class TestInvoiceCreate:
         assert invoice.tax_amount_cents == 2062
         assert invoice.total_amount_cents == 27062
 
-    def test_invoice_starts_as_draft(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_invoice_starts_as_draft(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """New invoices start in DRAFT status."""
         from core.models import InvoiceStatus
 
@@ -160,14 +160,14 @@ class TestInvoiceCreate:
         assert invoice.sent_at is None
         assert invoice.paid_at is None
 
-    def test_generates_invoice_number(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_generates_invoice_number(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Invoice number is auto-generated."""
         invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
 
         assert invoice.invoice_number is not None
         assert len(invoice.invoice_number) > 0
 
-    def test_rejects_ticket_without_items(self, db, as_test_user, invoice_service, ticket_service, test_customer, test_address):
+    def test_rejects_ticket_without_items(self, db, as_test_workspace, invoice_service, ticket_service, test_customer, test_address):
         """Cannot create invoice from ticket with no line items."""
         from core.models import TicketCreate
 
@@ -186,7 +186,7 @@ class TestInvoiceCreate:
 class TestInvoiceGet:
     """Tests for InvoiceService.get_by_id."""
 
-    def test_gets_invoice(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_gets_invoice(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Gets invoice by ID."""
         created = invoice_service.create_from_ticket(test_ticket_with_items.id)
 
@@ -195,7 +195,7 @@ class TestInvoiceGet:
         assert fetched is not None
         assert fetched.id == created.id
 
-    def test_returns_none_for_missing(self, db, as_test_user, invoice_service):
+    def test_returns_none_for_missing(self, db, as_test_workspace, invoice_service):
         """Returns None for non-existent invoice."""
         result = invoice_service.get_by_id(uuid4())
         assert result is None
@@ -204,7 +204,7 @@ class TestInvoiceGet:
 class TestInvoiceSend:
     """Tests for InvoiceService.send."""
 
-    def test_send_marks_sent(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_send_marks_sent(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Sending invoice updates status and timestamps."""
         from core.models import InvoiceStatus
 
@@ -216,7 +216,7 @@ class TestInvoiceSend:
         assert sent.sent_at is not None
         assert sent.issued_at is not None
 
-    def test_cannot_send_void_invoice(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_cannot_send_void_invoice(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Cannot send voided invoice."""
         invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
         invoice_service.void(invoice.id)
@@ -228,7 +228,7 @@ class TestInvoiceSend:
 class TestInvoicePayment:
     """Tests for InvoiceService payment methods."""
 
-    def test_record_payment_partial(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_record_payment_partial(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Recording partial payment updates status to PARTIAL."""
         from core.models import InvoiceStatus
 
@@ -242,7 +242,7 @@ class TestInvoicePayment:
         assert updated.amount_paid_cents == partial_amount
         assert updated.status == InvoiceStatus.PARTIAL
 
-    def test_record_payment_full(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_record_payment_full(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Recording full payment marks as PAID."""
         from core.models import InvoiceStatus
 
@@ -255,7 +255,7 @@ class TestInvoicePayment:
         assert updated.paid_at is not None
         assert updated.amount_paid_cents == invoice.total_amount_cents
 
-    def test_multiple_payments(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_multiple_payments(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Multiple payments accumulate."""
         from core.models import InvoiceStatus
 
@@ -277,7 +277,7 @@ class TestInvoicePayment:
 class TestInvoiceVoid:
     """Tests for InvoiceService.void."""
 
-    def test_void_invoice(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_void_invoice(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Voiding invoice sets status and timestamp."""
         from core.models import InvoiceStatus
 
@@ -288,7 +288,7 @@ class TestInvoiceVoid:
         assert voided.status == InvoiceStatus.VOID
         assert voided.voided_at is not None
 
-    def test_cannot_void_paid_invoice(self, db, as_test_user, invoice_service, test_ticket_with_items):
+    def test_cannot_void_paid_invoice(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
         """Cannot void paid invoice."""
         invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
         invoice_service.send(invoice.id)
@@ -301,7 +301,7 @@ class TestInvoiceVoid:
 class TestInvoiceList:
     """Tests for InvoiceService list methods."""
 
-    def test_list_for_customer(self, db, as_test_user, invoice_service, test_ticket_with_items, test_customer):
+    def test_list_for_customer(self, db, as_test_workspace, invoice_service, test_ticket_with_items, test_customer):
         """Lists invoices for a customer."""
         invoice_service.create_from_ticket(test_ticket_with_items.id)
 
@@ -314,7 +314,7 @@ class TestInvoiceList:
 class TestInvoiceEventPublishing:
     """Verify that InvoiceService publishes domain events to the bus."""
 
-    def test_send_publishes_invoice_sent(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+    def test_send_publishes_invoice_sent(self, db, as_test_workspace, invoice_service, event_bus, test_ticket_with_items):
         from core.models import InvoiceStatus
         from core.events import InvoiceSent
 
@@ -330,7 +330,7 @@ class TestInvoiceEventPublishing:
         assert received[0].invoice.id == invoice.id
         assert received[0].invoice.status == InvoiceStatus.SENT
 
-    def test_full_payment_publishes_invoice_paid(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+    def test_full_payment_publishes_invoice_paid(self, db, as_test_workspace, invoice_service, event_bus, test_ticket_with_items):
         from core.models import InvoiceStatus
         from core.events import InvoicePaid
 
@@ -347,7 +347,7 @@ class TestInvoiceEventPublishing:
         assert received[0].invoice.id == invoice.id
         assert received[0].invoice.status == InvoiceStatus.PAID
 
-    def test_partial_payment_does_not_publish_invoice_paid(self, db, as_test_user, invoice_service, event_bus, test_ticket_with_items):
+    def test_partial_payment_does_not_publish_invoice_paid(self, db, as_test_workspace, invoice_service, event_bus, test_ticket_with_items):
         from core.events import InvoicePaid
 
         invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)

@@ -7,36 +7,18 @@
 -- Production deployment:
 --   1. Create database: CREATE DATABASE crm;
 --   2. Connect as superuser: psql -U postgres -d crm -f schema.sql
---   3. Schema creates users, tables, RLS policies, and grants
+--   3. Schema creates workspace tables and RLS policies
 --
--- Users created:
---   - crm_admin:  Schema owner, migration executor (password in Vault)
---   - crm_dbuser: Application user with RLS-enforced queries (password in Vault)
+-- Required database roles are provisioned outside this schema. Their
+-- credentials belong in Vault and never appear in SQL source.
 --
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- User Creation
+-- Database role grants
 -- -----------------------------------------------------------------------------
--- Create application users if they don't exist.
--- Passwords MUST be changed via Vault after initial deployment.
+-- crm_admin owns schema deployment. crm_dbuser runs the service with RLS.
 -- -----------------------------------------------------------------------------
-
-DO $$
-BEGIN
-    -- Create admin user for schema management
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'crm_admin') THEN
-        CREATE USER crm_admin WITH PASSWORD 'CHANGE_IN_VAULT_IMMEDIATELY';
-        RAISE NOTICE 'Created user: crm_admin';
-    END IF;
-
-    -- Create application user for queries
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'crm_dbuser') THEN
-        CREATE USER crm_dbuser WITH PASSWORD 'CHANGE_IN_VAULT_IMMEDIATELY';
-        RAISE NOTICE 'Created user: crm_dbuser';
-    END IF;
-END
-$$;
 
 -- Grant database-level privileges
 GRANT ALL PRIVILEGES ON DATABASE crm TO crm_admin;
@@ -70,111 +52,32 @@ $$ LANGUAGE plpgsql;
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- users
+-- workspaces
 -- -----------------------------------------------------------------------------
--- Core user account. Initially user_id = business (single-user per business).
--- NO RLS - accessed during auth before context exists.
+-- Tenant root. Workspace identity is authenticated by the internal service
+-- boundary and never modeled as a CRM user account.
 -- -----------------------------------------------------------------------------
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email TEXT UNIQUE NOT NULL,
-    display_name TEXT,
-    timezone TEXT DEFAULT 'America/Chicago',
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_login_at TIMESTAMPTZ,
-    CONSTRAINT users_email_lowercase CHECK (email = lower(email))
-);
-
-CREATE TRIGGER users_updated_at BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE INDEX idx_users_email ON users(email);
-
-
--- -----------------------------------------------------------------------------
--- magic_link_tokens
--- -----------------------------------------------------------------------------
--- Ephemeral auth tokens. Hard delete after use/expiry.
--- -----------------------------------------------------------------------------
-CREATE TABLE magic_link_tokens (
-    token TEXT PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    email TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    used BOOLEAN NOT NULL DEFAULT false,
-    used_at TIMESTAMPTZ,
-    CONSTRAINT magic_link_expires_after_created CHECK (expires_at > created_at)
-);
-
-CREATE INDEX idx_magic_link_tokens_expires ON magic_link_tokens(expires_at);
-CREATE INDEX idx_magic_link_tokens_user ON magic_link_tokens(user_id);
-
-
--- -----------------------------------------------------------------------------
--- access_tokens
--- -----------------------------------------------------------------------------
--- Long-lived API credentials. NO RLS - validated during auth before context exists.
--- Stores only lookup metadata and a hash of the full token, never the raw token.
--- -----------------------------------------------------------------------------
-CREATE TABLE access_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    token_prefix TEXT NOT NULL,
-    token_hash TEXT UNIQUE NOT NULL,
-    scopes TEXT[] NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    last_used_at TIMESTAMPTZ,
-    revoked_at TIMESTAMPTZ,
-    CONSTRAINT access_tokens_name_not_blank CHECK (btrim(name) <> ''),
-    CONSTRAINT access_tokens_valid_scopes CHECK (scopes <@ ARRAY['read', 'write', 'admin']::TEXT[]),
-    CONSTRAINT access_tokens_nonempty_scopes CHECK (cardinality(scopes) > 0),
-    CONSTRAINT access_tokens_expires_after_created CHECK (expires_at > created_at)
-);
-
-CREATE INDEX idx_access_tokens_user ON access_tokens(user_id);
-CREATE UNIQUE INDEX idx_access_tokens_prefix ON access_tokens(token_prefix);
-CREATE INDEX idx_access_tokens_active ON access_tokens(user_id, expires_at) WHERE revoked_at IS NULL;
-
-
--- -----------------------------------------------------------------------------
--- security_events
--- -----------------------------------------------------------------------------
--- Append-only auth audit log. NO RLS.
--- -----------------------------------------------------------------------------
-CREATE TABLE security_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_type TEXT NOT NULL,
-    email TEXT,
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    ip_address INET,
-    user_agent TEXT,
-    details JSONB,
+CREATE TABLE workspaces (
+    id UUID PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_security_events_created ON security_events(created_at);
-CREATE INDEX idx_security_events_user ON security_events(user_id);
-CREATE INDEX idx_security_events_type ON security_events(event_type);
+ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
 
+CREATE POLICY workspaces_isolation ON workspaces FOR ALL
+    USING (id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
--- =============================================================================
--- SECTION 2: Core Business Entities
--- =============================================================================
 
 -- -----------------------------------------------------------------------------
 -- customers
 -- -----------------------------------------------------------------------------
 -- People or businesses who receive services.
--- Soft delete. RLS filters to current user AND not deleted.
+-- Soft delete. RLS filters to current workspace AND not deleted.
 -- -----------------------------------------------------------------------------
 CREATE TABLE customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 
     -- Name (person or business)
     first_name TEXT,
@@ -219,9 +122,9 @@ CREATE TRIGGER customers_updated_at BEFORE UPDATE ON customers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Indexes
-CREATE INDEX idx_customers_user ON customers(user_id);
+CREATE INDEX idx_customers_workspace ON customers(workspace_id);
 CREATE INDEX idx_customers_referred_by ON customers(referred_by) WHERE referred_by IS NOT NULL;
-CREATE INDEX idx_customers_reference_id ON customers(user_id, reference_id) WHERE reference_id IS NOT NULL;
+CREATE INDEX idx_customers_reference_id ON customers(workspace_id, reference_id) WHERE reference_id IS NOT NULL;
 
 -- Fuzzy search indexes (pg_trgm)
 CREATE INDEX idx_customers_first_name_trgm ON customers USING GIN (first_name gin_trgm_ops);
@@ -233,13 +136,13 @@ CREATE INDEX idx_customers_phone_trgm ON customers USING GIN (phone gin_trgm_ops
 -- RLS
 ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY customers_isolation ON customers FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY customers_insert ON customers FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -250,7 +153,7 @@ CREATE POLICY customers_insert ON customers FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE addresses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
 
     label TEXT,          -- "Home", "Office", "Rental Property"
@@ -271,16 +174,16 @@ CREATE TRIGGER addresses_updated_at BEFORE UPDATE ON addresses
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE INDEX idx_addresses_customer ON addresses(customer_id);
-CREATE INDEX idx_addresses_user ON addresses(user_id);
+CREATE INDEX idx_addresses_workspace ON addresses(workspace_id);
 
 -- RLS
 ALTER TABLE addresses ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY addresses_isolation ON addresses FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY addresses_insert ON addresses FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -292,7 +195,7 @@ CREATE POLICY addresses_insert ON addresses FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE services (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 
     name TEXT NOT NULL,
     description TEXT,
@@ -319,11 +222,14 @@ CREATE TABLE services (
 CREATE TRIGGER services_updated_at BEFORE UPDATE ON services
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE INDEX idx_services_user ON services(user_id);
-CREATE INDEX idx_services_active ON services(user_id) WHERE is_active = true AND deleted_at IS NULL;
+CREATE INDEX idx_services_workspace ON services(workspace_id);
+CREATE INDEX idx_services_active ON services(workspace_id) WHERE is_active = true AND deleted_at IS NULL;
 
--- NO RLS: Services are a shared catalog, not user-scoped data.
--- Soft-delete filtering handled in application layer queries.
+ALTER TABLE services ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY services_isolation ON services FOR ALL
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -336,7 +242,7 @@ CREATE INDEX idx_services_active ON services(user_id) WHERE is_active = true AND
 -- -----------------------------------------------------------------------------
 CREATE TABLE tickets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id),
     address_id UUID NOT NULL REFERENCES addresses(id),
 
@@ -378,41 +284,22 @@ CREATE TABLE tickets (
 CREATE TRIGGER tickets_updated_at BEFORE UPDATE ON tickets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE INDEX idx_tickets_user ON tickets(user_id);
+CREATE INDEX idx_tickets_workspace ON tickets(workspace_id);
 CREATE INDEX idx_tickets_customer ON tickets(customer_id);
-CREATE INDEX idx_tickets_scheduled ON tickets(user_id, scheduled_at);
-CREATE INDEX idx_tickets_status ON tickets(user_id, status);
-CREATE INDEX idx_tickets_date ON tickets(user_id, ((scheduled_at AT TIME ZONE 'UTC')::date));
+CREATE INDEX idx_tickets_scheduled ON tickets(workspace_id, scheduled_at);
+CREATE INDEX idx_tickets_status ON tickets(workspace_id, status);
+CREATE INDEX idx_tickets_date ON tickets(workspace_id, ((scheduled_at AT TIME ZONE 'UTC')::date));
 
 -- RLS
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY tickets_isolation ON tickets FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY tickets_insert ON tickets FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
-
-
--- -----------------------------------------------------------------------------
--- ticket_technicians
--- -----------------------------------------------------------------------------
--- Junction for ticket ↔ technician assignments.
--- Supports multiple technicians per ticket.
--- -----------------------------------------------------------------------------
-CREATE TABLE ticket_technicians (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-    technician_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role TEXT NOT NULL DEFAULT 'primary',  -- 'primary', 'assistant'
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(ticket_id, technician_id)
-);
-
-CREATE INDEX idx_ticket_technicians_ticket ON ticket_technicians(ticket_id);
-CREATE INDEX idx_ticket_technicians_technician ON ticket_technicians(technician_id);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -424,7 +311,7 @@ CREATE INDEX idx_ticket_technicians_technician ON ticket_technicians(technician_
 -- -----------------------------------------------------------------------------
 CREATE TABLE line_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
     service_id UUID NOT NULL REFERENCES services(id),
 
@@ -449,13 +336,13 @@ CREATE INDEX idx_line_items_service ON line_items(service_id);
 -- RLS
 ALTER TABLE line_items ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY line_items_isolation ON line_items FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY line_items_insert ON line_items FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -468,7 +355,7 @@ CREATE POLICY line_items_insert ON line_items FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id),
     ticket_id UUID NOT NULL REFERENCES tickets(id),  -- REQUIRED - always from ticket
 
@@ -502,27 +389,27 @@ CREATE TABLE invoices (
     deleted_at TIMESTAMPTZ,
 
     CONSTRAINT invoices_valid_status CHECK (status IN ('draft', 'sent', 'partial', 'paid', 'void')),
-    CONSTRAINT invoices_unique_number UNIQUE (user_id, invoice_number)
+    CONSTRAINT invoices_unique_number UNIQUE (workspace_id, invoice_number)
 );
 
 CREATE TRIGGER invoices_updated_at BEFORE UPDATE ON invoices
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE INDEX idx_invoices_user ON invoices(user_id);
+CREATE INDEX idx_invoices_workspace ON invoices(workspace_id);
 CREATE INDEX idx_invoices_customer ON invoices(customer_id);
 CREATE INDEX idx_invoices_ticket ON invoices(ticket_id);
-CREATE INDEX idx_invoices_status ON invoices(user_id, status);
+CREATE INDEX idx_invoices_status ON invoices(workspace_id, status);
 
 -- RLS
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY invoices_isolation ON invoices FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY invoices_insert ON invoices FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -538,7 +425,7 @@ CREATE POLICY invoices_insert ON invoices FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 
     customer_id UUID REFERENCES customers(id) ON DELETE CASCADE,
     ticket_id UUID REFERENCES tickets(id) ON DELETE CASCADE,
@@ -561,13 +448,13 @@ CREATE INDEX idx_notes_ticket ON notes(ticket_id) WHERE ticket_id IS NOT NULL;
 -- RLS
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY notes_isolation ON notes FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY notes_insert ON notes FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -578,7 +465,7 @@ CREATE POLICY notes_insert ON notes FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE attributes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
 
     key TEXT NOT NULL,
@@ -599,17 +486,17 @@ CREATE TRIGGER attributes_updated_at BEFORE UPDATE ON attributes
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE INDEX idx_attributes_customer ON attributes(customer_id);
-CREATE INDEX idx_attributes_key ON attributes(user_id, key);
+CREATE INDEX idx_attributes_key ON attributes(workspace_id, key);
 CREATE INDEX idx_attributes_value ON attributes USING GIN (value);
 
 -- RLS
 ALTER TABLE attributes ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY attributes_isolation ON attributes FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY attributes_insert ON attributes FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -623,7 +510,7 @@ CREATE POLICY attributes_insert ON attributes FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE scheduled_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     ticket_id UUID REFERENCES tickets(id) ON DELETE SET NULL,
 
@@ -648,21 +535,21 @@ CREATE INDEX idx_scheduled_messages_customer ON scheduled_messages(customer_id);
 ALTER TABLE scheduled_messages ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY scheduled_messages_isolation ON scheduled_messages FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY scheduled_messages_insert ON scheduled_messages FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
 -- message_log
 -- -----------------------------------------------------------------------------
 -- Audit trail for all messages sent (success or failure).
--- Append-only. NO RLS - admin accessible.
+-- Append-only and tenant scoped.
 -- -----------------------------------------------------------------------------
 CREATE TABLE message_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID,
     scheduled_message_id UUID REFERENCES scheduled_messages(id) ON DELETE SET NULL,
 
@@ -681,10 +568,16 @@ CREATE TABLE message_log (
     delivered_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_message_log_user ON message_log(user_id);
+CREATE INDEX idx_message_log_workspace ON message_log(workspace_id);
 CREATE INDEX idx_message_log_customer ON message_log(customer_id);
 CREATE INDEX idx_message_log_scheduled ON message_log(scheduled_message_id);
 CREATE INDEX idx_message_log_status ON message_log(status);
+
+ALTER TABLE message_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY message_log_isolation ON message_log FOR ALL
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -699,7 +592,7 @@ CREATE INDEX idx_message_log_status ON message_log(status);
 -- -----------------------------------------------------------------------------
 CREATE TABLE waitlist (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
 
     -- "Notify me when you're near this other customer"
@@ -724,17 +617,17 @@ CREATE TABLE waitlist (
 CREATE TRIGGER waitlist_updated_at BEFORE UPDATE ON waitlist
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE INDEX idx_waitlist_active ON waitlist(user_id) WHERE is_active = true;
+CREATE INDEX idx_waitlist_active ON waitlist(workspace_id) WHERE is_active = true;
 CREATE INDEX idx_waitlist_near_customer ON waitlist(near_customer_id) WHERE near_customer_id IS NOT NULL;
 
 -- RLS
 ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY waitlist_isolation ON waitlist FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY waitlist_insert ON waitlist FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -746,11 +639,11 @@ CREATE POLICY waitlist_insert ON waitlist FOR INSERT
 -- -----------------------------------------------------------------------------
 -- Potential customers captured from phone calls or inquiries.
 -- Raw notes processed by LLM into structured data.
--- Soft delete. RLS filters to current user AND not deleted.
+-- Soft delete. RLS filters to current workspace AND not deleted.
 -- -----------------------------------------------------------------------------
 CREATE TABLE leads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 
     -- Status: new → contacted → qualified → converted|archived
     status TEXT NOT NULL DEFAULT 'new',
@@ -798,10 +691,10 @@ CREATE TRIGGER leads_updated_at BEFORE UPDATE ON leads
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Indexes
-CREATE INDEX idx_leads_user ON leads(user_id);
-CREATE INDEX idx_leads_status ON leads(user_id, status);
+CREATE INDEX idx_leads_workspace ON leads(workspace_id);
+CREATE INDEX idx_leads_status ON leads(workspace_id, status);
 CREATE INDEX idx_leads_reminder ON leads(reminder_at) WHERE reminder_at IS NOT NULL AND status NOT IN ('converted', 'archived');
-CREATE INDEX idx_leads_created ON leads(user_id, created_at);
+CREATE INDEX idx_leads_created ON leads(workspace_id, created_at);
 
 -- Fuzzy search indexes (pg_trgm)
 CREATE INDEX idx_leads_name_trgm ON leads USING GIN (name gin_trgm_ops);
@@ -811,13 +704,13 @@ CREATE INDEX idx_leads_email_trgm ON leads USING GIN (email gin_trgm_ops);
 -- RLS
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 
--- RLS: User isolation only. Soft-delete filtering handled in application layer.
+-- RLS: Workspace isolation only. Soft-delete filtering handled in application layer.
 CREATE POLICY leads_isolation ON leads FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY leads_insert ON leads FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -832,7 +725,7 @@ CREATE POLICY leads_insert ON leads FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE recurring_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     address_id UUID NOT NULL REFERENCES addresses(id),
 
@@ -860,17 +753,17 @@ CREATE TABLE recurring_templates (
 CREATE TRIGGER recurring_templates_updated_at BEFORE UPDATE ON recurring_templates
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE INDEX idx_recurring_templates_user ON recurring_templates(user_id);
+CREATE INDEX idx_recurring_templates_workspace ON recurring_templates(workspace_id);
 CREATE INDEX idx_recurring_templates_next ON recurring_templates(next_occurrence_at) WHERE is_active = true;
 
 -- RLS
 ALTER TABLE recurring_templates ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY recurring_templates_isolation ON recurring_templates FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY recurring_templates_insert ON recurring_templates FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
@@ -882,6 +775,7 @@ CREATE POLICY recurring_templates_insert ON recurring_templates FOR INSERT
 -- -----------------------------------------------------------------------------
 CREATE TABLE recurring_template_services (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     template_id UUID NOT NULL REFERENCES recurring_templates(id) ON DELETE CASCADE,
     service_id UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 
@@ -893,6 +787,13 @@ CREATE TABLE recurring_template_services (
 );
 
 CREATE INDEX idx_recurring_template_services_template ON recurring_template_services(template_id);
+CREATE INDEX idx_recurring_template_services_workspace ON recurring_template_services(workspace_id);
+
+ALTER TABLE recurring_template_services ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY recurring_template_services_isolation ON recurring_template_services FOR ALL
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -902,11 +803,11 @@ CREATE INDEX idx_recurring_template_services_template ON recurring_template_serv
 -- -----------------------------------------------------------------------------
 -- audit_log
 -- -----------------------------------------------------------------------------
--- Universal change tracking. Append-only. NO RLS.
+-- Universal change tracking. Append-only and tenant scoped.
 -- -----------------------------------------------------------------------------
 CREATE TABLE audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     entity_type TEXT NOT NULL,
     entity_id UUID NOT NULL,
     action TEXT NOT NULL,  -- 'create', 'update', 'delete'
@@ -916,8 +817,14 @@ CREATE TABLE audit_log (
 );
 
 CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
-CREATE INDEX idx_audit_log_user ON audit_log(user_id);
+CREATE INDEX idx_audit_log_workspace ON audit_log(workspace_id);
 CREATE INDEX idx_audit_log_created ON audit_log(created_at);
+
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY audit_log_isolation ON audit_log FOR ALL
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================
@@ -927,13 +834,12 @@ CREATE INDEX idx_audit_log_created ON audit_log(created_at);
 -- -----------------------------------------------------------------------------
 -- model_authorization_queue
 -- -----------------------------------------------------------------------------
--- Queue for MCP actions requiring human authorization.
--- Pending requests show in web UI at /authorizations.
--- RLS filters to current user. Status tracked for polling.
+-- Queue for internal model actions requiring workspace authorization.
+-- RLS filters to current workspace. Status tracked for polling.
 -- -----------------------------------------------------------------------------
 CREATE TABLE model_authorization_queue (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 
     -- What action was requested
     domain TEXT NOT NULL,           -- 'contact', 'invoice', etc.
@@ -950,7 +856,7 @@ CREATE TABLE model_authorization_queue (
     status TEXT NOT NULL DEFAULT 'pending',
 
     -- Human decision
-    decided_by UUID REFERENCES users(id),
+    decided_by UUID REFERENCES workspaces(id),
     decided_at TIMESTAMPTZ,
     decision_notes TEXT,            -- Human's note back to model
 
@@ -970,7 +876,7 @@ CREATE TABLE model_authorization_queue (
 );
 
 -- Indexes
-CREATE INDEX idx_auth_queue_user_pending ON model_authorization_queue(user_id, status)
+CREATE INDEX idx_auth_queue_workspace_pending ON model_authorization_queue(workspace_id, status)
     WHERE status = 'pending';
 CREATE INDEX idx_auth_queue_expires ON model_authorization_queue(expires_at)
     WHERE status = 'pending';
@@ -979,10 +885,10 @@ CREATE INDEX idx_auth_queue_expires ON model_authorization_queue(expires_at)
 ALTER TABLE model_authorization_queue ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY auth_queue_isolation ON model_authorization_queue FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::uuid);
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 CREATE POLICY auth_queue_insert ON model_authorization_queue FOR INSERT
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid);
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- =============================================================================

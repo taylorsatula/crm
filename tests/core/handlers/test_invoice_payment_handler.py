@@ -69,14 +69,14 @@ def invoice_service(db, event_bus):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(
         first_name="Payment", last_name="Test", email="pay@test.com"
     ))
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     from core.models import AddressCreate
     return address_service.create(AddressCreate(
         customer_id=test_customer.id,
@@ -86,7 +86,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 @pytest.fixture
 def test_invoice(
-    as_test_user, ticket_service, invoice_service,
+    as_test_workspace, ticket_service, invoice_service,
     line_item_service, catalog_service,
     test_customer, test_address
 ):
@@ -125,7 +125,7 @@ def handler(message_service):
 class TestInvoicePaymentHandler:
 
     def test_schedules_receipt_message_in_db(
-        self, db, as_test_user, handler, message_service, test_customer, test_invoice
+        self, db, as_test_workspace, handler, message_service, test_customer, test_invoice
     ):
         event = InvoicePaid(invoice=test_invoice)
         handler(event)
@@ -144,7 +144,7 @@ class TestInvoicePaymentHandler:
         assert test_invoice.invoice_number in msg.body
 
     def test_receipt_references_correct_invoice_number(
-        self, db, as_test_user, handler, message_service, test_customer, test_invoice
+        self, db, as_test_workspace, handler, message_service, test_customer, test_invoice
     ):
         event = InvoicePaid(invoice=test_invoice)
         handler(event)
@@ -153,7 +153,7 @@ class TestInvoicePaymentHandler:
         assert any(test_invoice.invoice_number in (m.body or "") for m in messages)
 
     def test_schedules_exactly_one_message(
-        self, db, as_test_user, handler, message_service, test_customer, test_invoice
+        self, db, as_test_workspace, handler, message_service, test_customer, test_invoice
     ):
         # Count before
         before = len(message_service.list_for_customer(test_customer.id))

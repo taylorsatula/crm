@@ -54,7 +54,7 @@ def catalog_service(db):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
 
@@ -64,7 +64,7 @@ def test_customer(as_test_user, customer_service):
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     """Create a test address."""
     from core.models import AddressCreate
 
@@ -78,7 +78,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 
 @pytest.fixture
-def test_ticket(as_test_user, ticket_service, test_customer, test_address):
+def test_ticket(as_test_workspace, ticket_service, test_customer, test_address):
     """Create a test ticket."""
     from core.models import TicketCreate
 
@@ -92,7 +92,7 @@ def test_ticket(as_test_user, ticket_service, test_customer, test_address):
 
 
 @pytest.fixture
-def test_service(as_test_user, catalog_service):
+def test_service(as_test_workspace, catalog_service):
     """Create a test service in the catalog."""
     from core.models import ServiceCreate, PricingType
 
@@ -108,7 +108,7 @@ def test_service(as_test_user, catalog_service):
 class TestLineItemCreate:
     """Tests for LineItemService.create."""
 
-    def test_creates_line_item(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_creates_line_item(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Creates line item with provided data."""
         from core.models import LineItemCreate
 
@@ -127,7 +127,7 @@ class TestLineItemCreate:
         assert line_item.unit_price_cents == 5000
         assert line_item.total_price_cents == 10000
 
-    def test_computes_total_from_unit_price(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_computes_total_from_unit_price(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Total is computed when only unit_price_cents is provided."""
         from core.models import LineItemCreate
 
@@ -141,7 +141,7 @@ class TestLineItemCreate:
 
         assert line_item.total_price_cents == 4500
 
-    def test_uses_service_default_price(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_uses_service_default_price(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Uses service's default price when no price specified."""
         from core.models import LineItemCreate
 
@@ -152,7 +152,7 @@ class TestLineItemCreate:
         # test_service has default_price_cents=5000
         assert line_item.total_price_cents == 5000
 
-    def test_rejects_closed_ticket(self, db, as_test_user, line_item_service, ticket_service, test_ticket, test_service):
+    def test_rejects_closed_ticket(self, db, as_test_workspace, line_item_service, ticket_service, test_ticket, test_service):
         """Cannot add line items to closed tickets."""
         from core.models import LineItemCreate
 
@@ -167,7 +167,7 @@ class TestLineItemCreate:
                 total_price_cents=5000
             ))
 
-    def test_rejects_cancelled_ticket(self, db, as_test_user, line_item_service, ticket_service, test_ticket, test_service):
+    def test_rejects_cancelled_ticket(self, db, as_test_workspace, line_item_service, ticket_service, test_ticket, test_service):
         """Cannot add line items to cancelled tickets."""
         from core.models import LineItemCreate
 
@@ -183,7 +183,7 @@ class TestLineItemCreate:
 class TestLineItemGet:
     """Tests for LineItemService.get_by_id."""
 
-    def test_gets_line_item(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_gets_line_item(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Gets line item by ID."""
         from core.models import LineItemCreate
 
@@ -197,7 +197,7 @@ class TestLineItemGet:
         assert fetched is not None
         assert fetched.id == created.id
 
-    def test_returns_none_for_missing(self, db, as_test_user, line_item_service):
+    def test_returns_none_for_missing(self, db, as_test_workspace, line_item_service):
         """Returns None for non-existent line item."""
         result = line_item_service.get_by_id(uuid4())
         assert result is None
@@ -206,7 +206,7 @@ class TestLineItemGet:
 class TestLineItemUpdate:
     """Tests for LineItemService.update."""
 
-    def test_updates_quantity(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_updates_quantity(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Updates line item quantity."""
         from core.models import LineItemCreate, LineItemUpdate
 
@@ -225,7 +225,7 @@ class TestLineItemUpdate:
         assert updated.quantity == 3
         assert updated.total_price_cents == 15000
 
-    def test_updates_description(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_updates_description(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Updates line item description."""
         from core.models import LineItemCreate, LineItemUpdate
 
@@ -240,7 +240,7 @@ class TestLineItemUpdate:
 
         assert updated.description == "Custom window cleaning for storefront"
 
-    def test_rejects_closed_ticket_update(self, db, as_test_user, line_item_service, ticket_service, test_ticket, test_service):
+    def test_rejects_closed_ticket_update(self, db, as_test_workspace, line_item_service, ticket_service, test_ticket, test_service):
         """Cannot update line items on closed tickets."""
         from core.models import LineItemCreate, LineItemUpdate
 
@@ -261,7 +261,7 @@ class TestLineItemUpdate:
 class TestLineItemDelete:
     """Tests for LineItemService.delete."""
 
-    def test_deletes_line_item(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_deletes_line_item(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Soft deletes line item."""
         from core.models import LineItemCreate
 
@@ -277,7 +277,7 @@ class TestLineItemDelete:
         fetched = line_item_service.get_by_id(line_item.id)
         assert fetched is None
 
-    def test_returns_false_for_missing(self, db, as_test_user, line_item_service):
+    def test_returns_false_for_missing(self, db, as_test_workspace, line_item_service):
         """Returns False when deleting non-existent line item."""
         result = line_item_service.delete(uuid4())
         assert result is False
@@ -286,7 +286,7 @@ class TestLineItemDelete:
 class TestLineItemList:
     """Tests for LineItemService.list_for_ticket."""
 
-    def test_lists_ticket_line_items(self, db, as_test_user, line_item_service, test_ticket, test_service, catalog_service):
+    def test_lists_ticket_line_items(self, db, as_test_workspace, line_item_service, test_ticket, test_service, catalog_service):
         """Lists all line items for a ticket."""
         from core.models import LineItemCreate, ServiceCreate, PricingType
 
@@ -316,7 +316,7 @@ class TestLineItemList:
         # Cleanup
         catalog_service.delete(service2.id)
 
-    def test_excludes_deleted_items(self, db, as_test_user, line_item_service, test_ticket, test_service):
+    def test_excludes_deleted_items(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """list_for_ticket excludes soft-deleted items."""
         from core.models import LineItemCreate
 

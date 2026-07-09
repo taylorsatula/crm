@@ -124,32 +124,11 @@ class EmailGatewayClient:
         )
         return True
 
-    def send_magic_link(self, email: str, token: str, app_url: str) -> None:
-        """
-        Send magic link email via gateway.
-
-        Args:
-            email: Recipient email address
-            token: Magic link token
-            app_url: Application base URL for constructing the link
-
-        Raises:
-            EmailGatewayError: On any failure
-        """
-        payload = {
-            "email": email,
-            "token": token,
-            "app_url": app_url,
-        }
-        self._sign_and_send(payload)
-        logger.info(f"Magic link email sent to {email}")
-
     def send_email(
         self,
         to: str,
         subject: str,
         body: str,
-        sender: str = "system",
     ) -> None:
         """
         Send an arbitrary email via gateway.
@@ -158,21 +137,15 @@ class EmailGatewayClient:
             to: Recipient email address
             subject: Email subject line
             body: Plain text email body
-            sender: Sender identity - "auth" or "system" (default: "system")
-
         Raises:
-            ValueError: If sender is invalid
             EmailGatewayError: On gateway failure
         """
-        if sender not in ("auth", "system"):
-            raise ValueError(f"sender must be 'auth' or 'system', got '{sender}'")
-
         payload = {
             "type": "custom",
             "email": to,
             "subject": subject,
             "body": body,
-            "sender": sender,
+            "sender": "system",
         }
         self._sign_and_send(payload)
         logger.info(f"Email sent to {to}: {subject}")

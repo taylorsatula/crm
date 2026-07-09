@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction
 from core.models import Attribute, AttributeCreate
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class AttributeService:
         Returns:
             Created or updated attribute
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         now = now_utc()
 
         # Check if attribute already exists for this customer+key
@@ -85,7 +85,7 @@ class AttributeService:
         row = self.postgres.execute_returning(
             """
             INSERT INTO attributes (
-                id, user_id, customer_id, key, value,
+                id, workspace_id, customer_id, key, value,
                 source_type, source_note_id, confidence,
                 created_at, updated_at
             ) VALUES (
@@ -96,7 +96,7 @@ class AttributeService:
             RETURNING *
             """,
             (
-                attr_id, user_id, data.customer_id, data.key, value_json,
+                attr_id, workspace_id, data.customer_id, data.key, value_json,
                 data.source_type, data.source_note_id, data.confidence,
                 now, now
             )

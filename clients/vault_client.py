@@ -88,7 +88,7 @@ class VaultClient:
         Caller passes 'database', we access 'crm/database'.
 
         Args:
-            path: Secret path relative to crm/ (e.g., 'database', 'valkey')
+            path: Secret path relative to crm/ (e.g., 'database', 'internal')
             field: Field name within secret (e.g., 'url')
 
         Returns:
@@ -203,19 +203,6 @@ def get_database_url() -> str:
     return value
 
 
-def get_valkey_url() -> str:
-    """Get Valkey (Redis) connection URL from Vault."""
-    cache_key = "crm/valkey/url"
-
-    if cache_key in _secret_cache:
-        return _secret_cache[cache_key]
-
-    client = _ensure_vault_client()
-    value = client.get_secret("valkey", "url")
-    _secret_cache[cache_key] = value
-    return value
-
-
 def get_email_config() -> Dict[str, str]:
     """Get email gateway configuration from Vault.
 
@@ -246,22 +233,3 @@ def get_llm_config() -> Dict[str, str]:
         Dict with keys: api_key and optionally base_url
     """
     return _get_llm_config(_ensure_vault_client())
-
-
-def get_stripe_config() -> Dict[str, str]:
-    """Get Stripe configuration from Vault."""
-    client = _ensure_vault_client()
-
-    fields = ["secret_key", "webhook_secret", "publishable_key"]
-    result = {}
-
-    for field in fields:
-        cache_key = f"crm/stripe/{field}"
-        if cache_key in _secret_cache:
-            result[field] = _secret_cache[cache_key]
-        else:
-            value = client.get_secret("stripe", field)
-            _secret_cache[cache_key] = value
-            result[field] = value
-
-    return result

@@ -12,8 +12,9 @@ from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction
 from core.event_bus import EventBus
 from core.events import NoteCreated
+from core.exceptions import NotFoundError
 from core.models import Note, NoteCreate
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -37,14 +38,14 @@ class NoteService:
         Returns:
             Created note
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         note_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO notes (
-                id, user_id, customer_id, ticket_id,
+                id, workspace_id, customer_id, ticket_id,
                 content, created_at
             ) VALUES (
                 %s, %s, %s, %s,
@@ -53,7 +54,7 @@ class NoteService:
             RETURNING *
             """,
             (
-                note_id, user_id, data.customer_id, data.ticket_id,
+                note_id, workspace_id, data.customer_id, data.ticket_id,
                 data.content, now
             )
         )[0]
@@ -185,7 +186,7 @@ class NoteService:
         """
         current = self.get_by_id(note_id)
         if current is None:
-            raise ValueError(f"Note {note_id} not found")
+            raise NotFoundError(f"Note {note_id} not found")
 
         now = now_utc()
         row = self.postgres.execute_returning(

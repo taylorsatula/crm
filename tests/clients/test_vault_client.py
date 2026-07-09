@@ -13,7 +13,6 @@ from clients.vault_client import (
     get_database_url,
     get_email_config,
     get_llm_config,
-    get_valkey_url,
 )
 
 
@@ -22,7 +21,6 @@ DEFAULT_SECRETS = {
         "url": "postgresql://app:pass@localhost:5432/crm",
         "admin_url": "postgresql://admin:pass@localhost:5432/crm",
     },
-    "crm/valkey": {"url": "redis://localhost:6379/0"},
     "crm/email": {
         "gateway_url": "https://email.example.com/send",
         "api_key": "email-key",
@@ -230,12 +228,6 @@ class TestConvenienceFunctions:
         url = get_database_url()
 
         assert url.startswith("postgresql://")
-
-    def test_get_valkey_url_returns_redis(self, fake_hvac):
-        """get_valkey_url returns Redis connection string."""
-        url = get_valkey_url()
-
-        assert url.startswith("redis://")
 
     def test_get_email_config_requires_health_url(self, fake_hvac):
         """Email config includes all fields required for runtime and health checks."""

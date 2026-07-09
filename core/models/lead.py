@@ -72,7 +72,7 @@ class Lead(BaseModel):
     """Full lead entity as stored."""
 
     id: UUID
-    user_id: UUID
+    workspace_id: UUID
     status: LeadStatus
     raw_notes: str
     extracted_data: dict[str, Any] | None

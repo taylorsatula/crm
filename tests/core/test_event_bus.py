@@ -24,7 +24,7 @@ from utils.timezone import now_utc
 def _customer():
     now = now_utc()
     return Customer(
-        id=uuid4(), user_id=uuid4(),
+        id=uuid4(), workspace_id=uuid4(),
         first_name="Test", last_name="Customer",
         business_name=None, email=None, phone=None,
         address=None, reference_id=None, notes=None,
@@ -38,7 +38,7 @@ def _customer():
 def _ticket(_customer):
     now = now_utc()
     return Ticket(
-        id=uuid4(), user_id=_customer.user_id,
+        id=uuid4(), workspace_id=_customer.workspace_id,
         customer_id=_customer.id, address_id=uuid4(),
         status=TicketStatus.SCHEDULED,
         scheduled_at=now + timedelta(hours=1),
@@ -59,7 +59,7 @@ def _ticket(_customer):
 
 class TestSubscribeAndPublish:
 
-    def test_single_handler_receives_the_exact_event_object(self, _ticket, as_test_user):
+    def test_single_handler_receives_the_exact_event_object(self, _ticket, as_test_workspace):
         bus = EventBus()
         received = []
         bus.subscribe("TicketCreated", received.append)
@@ -70,7 +70,7 @@ class TestSubscribeAndPublish:
         assert len(received) == 1
         assert received[0] is event
 
-    def test_handler_can_read_payload_fields(self, _ticket, as_test_user):
+    def test_handler_can_read_payload_fields(self, _ticket, as_test_workspace):
         bus = EventBus()
         ticket_ids = []
         bus.subscribe("TicketCreated", lambda e: ticket_ids.append(e.ticket.id))
@@ -80,7 +80,7 @@ class TestSubscribeAndPublish:
 
         assert ticket_ids == [_ticket.id]
 
-    def test_multiple_handlers_called_in_subscription_order(self, _ticket, as_test_user):
+    def test_multiple_handlers_called_in_subscription_order(self, _ticket, as_test_workspace):
         bus = EventBus()
         order = []
         bus.subscribe("TicketCreated", lambda e: order.append("A"))
@@ -91,7 +91,7 @@ class TestSubscribeAndPublish:
 
         assert order == ["A", "B", "C"]
 
-    def test_type_isolation_only_matching_subscribers_called(self, _ticket, _customer, as_test_user):
+    def test_type_isolation_only_matching_subscribers_called(self, _ticket, _customer, as_test_workspace):
         bus = EventBus()
         ticket_calls = []
         customer_calls = []
@@ -103,11 +103,11 @@ class TestSubscribeAndPublish:
         assert len(ticket_calls) == 1
         assert customer_calls == []
 
-    def test_no_subscribers_does_not_raise(self, _ticket, as_test_user):
+    def test_no_subscribers_does_not_raise(self, _ticket, as_test_workspace):
         bus = EventBus()
         bus.publish(TicketCreated.create(ticket=_ticket))
 
-    def test_two_publishes_deliver_two_distinct_events(self, _ticket, as_test_user):
+    def test_two_publishes_deliver_two_distinct_events(self, _ticket, as_test_workspace):
         bus = EventBus()
         received = []
         bus.subscribe("TicketCreated", received.append)
@@ -130,14 +130,14 @@ class TestSubscribeAndPublish:
 
 class TestHandlerErrorIsolation:
 
-    def test_handler_exception_does_not_propagate(self, _ticket, as_test_user):
+    def test_handler_exception_does_not_propagate(self, _ticket, as_test_workspace):
         bus = EventBus()
         bus.subscribe("TicketCreated", lambda e: (_ for _ in ()).throw(RuntimeError("boom")))
 
         # Must not raise
         bus.publish(TicketCreated.create(ticket=_ticket))
 
-    def test_handler_exception_is_logged_with_event_type_and_event_id(self, _ticket, caplog, as_test_user):
+    def test_handler_exception_is_logged_with_event_type_and_event_id(self, _ticket, caplog, as_test_workspace):
         bus = EventBus()
 
         def failing_handler(event):
@@ -153,7 +153,7 @@ class TestHandlerErrorIsolation:
         assert "TicketCreated" in caplog.text
         assert event.event_id in caplog.text
 
-    def test_second_handler_runs_after_first_handler_raises(self, _ticket, as_test_user):
+    def test_second_handler_runs_after_first_handler_raises(self, _ticket, as_test_workspace):
         bus = EventBus()
         second_handler_ticket_ids = []
 
@@ -167,7 +167,7 @@ class TestHandlerErrorIsolation:
 
         assert second_handler_ticket_ids == [_ticket.id]
 
-    def test_all_handlers_run_even_if_multiple_fail(self, _ticket, as_test_user):
+    def test_all_handlers_run_even_if_multiple_fail(self, _ticket, as_test_workspace):
         bus = EventBus()
         results = []
 

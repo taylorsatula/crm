@@ -46,7 +46,7 @@ def address_service(db):
 
 
 @pytest.fixture
-def test_customer(as_test_user, customer_service):
+def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
 
@@ -60,7 +60,7 @@ def test_customer(as_test_user, customer_service):
 
 
 @pytest.fixture
-def test_address(as_test_user, address_service, test_customer):
+def test_address(as_test_workspace, address_service, test_customer):
     """Create a test address."""
     from core.models import AddressCreate
 
@@ -74,7 +74,7 @@ def test_address(as_test_user, address_service, test_customer):
 
 
 @pytest.fixture
-def test_ticket(as_test_user, ticket_service, test_customer, test_address):
+def test_ticket(as_test_workspace, ticket_service, test_customer, test_address):
     """Create a test ticket."""
     from core.models import TicketCreate
 
@@ -90,7 +90,7 @@ def test_ticket(as_test_user, ticket_service, test_customer, test_address):
 class TestMessageSchedule:
     """Tests for MessageService.schedule."""
 
-    def test_schedules_message_with_all_fields(self, db, as_test_user, message_service, test_customer):
+    def test_schedules_message_with_all_fields(self, db, as_test_workspace, message_service, test_customer):
         """Schedules a message and verifies all fields are persisted correctly."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -116,7 +116,7 @@ class TestMessageSchedule:
         assert message.scheduled_for == scheduled_for
         assert message.created_at is not None
 
-    def test_schedules_ticket_linked_message(self, db, as_test_user, message_service, test_customer, test_ticket):
+    def test_schedules_ticket_linked_message(self, db, as_test_workspace, message_service, test_customer, test_ticket):
         """Schedules message linked to ticket for appointment tracking."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -138,7 +138,7 @@ class TestMessageSchedule:
 class TestMessageStatusTransitions:
     """Tests for message status lifecycle transitions."""
 
-    def test_pending_to_sent_transition(self, db, as_test_user, message_service, test_customer):
+    def test_pending_to_sent_transition(self, db, as_test_workspace, message_service, test_customer):
         """Verifies pending -> sent transition updates status correctly."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -158,7 +158,7 @@ class TestMessageStatusTransitions:
         refetched = message_service.get_by_id(message.id)
         assert refetched.status == MessageStatus.SENT
 
-    def test_pending_to_failed_transition(self, db, as_test_user, message_service, test_customer):
+    def test_pending_to_failed_transition(self, db, as_test_workspace, message_service, test_customer):
         """Verifies pending -> failed transition when gateway error occurs."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -175,7 +175,7 @@ class TestMessageStatusTransitions:
         refetched = message_service.get_by_id(message.id)
         assert refetched.status == MessageStatus.FAILED
 
-    def test_pending_to_skipped_transition(self, db, as_test_user, message_service, test_customer):
+    def test_pending_to_skipped_transition(self, db, as_test_workspace, message_service, test_customer):
         """Verifies pending -> skipped when message cannot be delivered (no email, etc.)."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -192,7 +192,7 @@ class TestMessageStatusTransitions:
         refetched = message_service.get_by_id(message.id)
         assert refetched.status == MessageStatus.SKIPPED
 
-    def test_pending_to_cancelled_transition(self, db, as_test_user, message_service, test_customer):
+    def test_pending_to_cancelled_transition(self, db, as_test_workspace, message_service, test_customer):
         """Verifies pending -> cancelled transition."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -207,7 +207,7 @@ class TestMessageStatusTransitions:
 
         assert cancelled.status == MessageStatus.CANCELLED
 
-    def test_cannot_cancel_sent_message(self, db, as_test_user, message_service, test_customer):
+    def test_cannot_cancel_sent_message(self, db, as_test_workspace, message_service, test_customer):
         """Cannot transition from sent back to cancelled."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -222,7 +222,7 @@ class TestMessageStatusTransitions:
         with pytest.raises(ValueError, match="not pending"):
             message_service.cancel(message.id)
 
-    def test_cannot_cancel_failed_message(self, db, as_test_user, message_service, test_customer):
+    def test_cannot_cancel_failed_message(self, db, as_test_workspace, message_service, test_customer):
         """Cannot transition from failed to cancelled."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -241,7 +241,7 @@ class TestMessageStatusTransitions:
 class TestPendingMessageRetrieval:
     """Tests for retrieving messages ready to be sent."""
 
-    def test_list_pending_due_returns_only_due_messages(self, db, as_test_user, message_service, test_customer):
+    def test_list_pending_due_returns_only_due_messages(self, db, as_test_workspace, message_service, test_customer):
         """list_pending_due returns messages where scheduled_for <= now."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -276,7 +276,7 @@ class TestPendingMessageRetrieval:
         assert now_msg.id in pending_ids
         assert future_msg.id not in pending_ids
 
-    def test_list_pending_due_excludes_non_pending_statuses(self, db, as_test_user, message_service, test_customer):
+    def test_list_pending_due_excludes_non_pending_statuses(self, db, as_test_workspace, message_service, test_customer):
         """Only pending messages are returned, not sent/failed/skipped/cancelled."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -326,7 +326,7 @@ class TestPendingMessageRetrieval:
 class TestProcessPendingMessages:
     """Tests for the process_pending method that sends messages."""
 
-    def test_process_pending_sends_due_messages(self, db, as_test_user, message_service, test_customer):
+    def test_process_pending_sends_due_messages(self, db, as_test_workspace, message_service, test_customer):
         """process_pending sends all due messages through email gateway."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -365,7 +365,7 @@ class TestProcessPendingMessages:
         assert results["failed"] == 0
         assert results["skipped"] == 0
 
-    def test_process_pending_marks_failed_on_gateway_error(self, db, as_test_user, message_service, test_customer):
+    def test_process_pending_marks_failed_on_gateway_error(self, db, as_test_workspace, message_service, test_customer):
         """process_pending marks message as FAILED when gateway throws exception."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -395,7 +395,7 @@ class TestProcessPendingMessages:
         assert results["failed"] == 1
         assert results["skipped"] == 0
 
-    def test_process_pending_marks_skipped_when_no_email(self, db, as_test_user, message_service, customer_service):
+    def test_process_pending_marks_skipped_when_no_email(self, db, as_test_workspace, message_service, customer_service):
         """process_pending marks SKIPPED (not failed) when customer has no email."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus, CustomerCreate
 
@@ -433,7 +433,7 @@ class TestProcessPendingMessages:
 
         customer_service.delete(customer_no_email.id)
 
-    def test_process_pending_mixed_results(self, db, as_test_user, message_service, customer_service):
+    def test_process_pending_mixed_results(self, db, as_test_workspace, message_service, customer_service):
         """process_pending correctly categorizes sent/failed/skipped."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus, CustomerCreate
 
@@ -517,7 +517,7 @@ class TestProcessPendingMessages:
 class TestListPendingForTicket:
     """Tests for MessageService.list_pending_for_ticket."""
 
-    def test_returns_pending_messages_for_ticket(self, db, as_test_user, message_service, test_customer, test_ticket):
+    def test_returns_pending_messages_for_ticket(self, db, as_test_workspace, message_service, test_customer, test_ticket):
         """Returns only pending messages linked to the specified ticket."""
         from core.models import ScheduledMessageCreate, MessageType, MessageStatus
 
@@ -536,7 +536,7 @@ class TestListPendingForTicket:
         assert pending[0].ticket_id == test_ticket.id
         assert pending[0].status == MessageStatus.PENDING
 
-    def test_excludes_non_pending_messages(self, db, as_test_user, message_service, test_customer, test_ticket):
+    def test_excludes_non_pending_messages(self, db, as_test_workspace, message_service, test_customer, test_ticket):
         """Sent, cancelled, and failed messages are excluded."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -564,7 +564,7 @@ class TestListPendingForTicket:
         assert sent_msg.id not in pending_ids
         assert cancelled_msg.id not in pending_ids
 
-    def test_excludes_messages_for_other_tickets(self, db, as_test_user, message_service, test_customer, test_ticket, ticket_service, test_address):
+    def test_excludes_messages_for_other_tickets(self, db, as_test_workspace, message_service, test_customer, test_ticket, ticket_service, test_address):
         """Messages linked to a different ticket are not returned."""
         from core.models import ScheduledMessageCreate, MessageType, TicketCreate
 
@@ -586,12 +586,12 @@ class TestListPendingForTicket:
 
         assert pending == []
 
-    def test_returns_empty_for_ticket_with_no_messages(self, db, as_test_user, message_service, test_ticket):
+    def test_returns_empty_for_ticket_with_no_messages(self, db, as_test_workspace, message_service, test_ticket):
         """Returns empty list when ticket has no pending messages."""
         pending = message_service.list_pending_for_ticket(test_ticket.id)
         assert pending == []
 
-    def test_ordered_by_scheduled_for_ascending(self, db, as_test_user, message_service, test_customer, test_ticket):
+    def test_ordered_by_scheduled_for_ascending(self, db, as_test_workspace, message_service, test_customer, test_ticket):
         """Pending messages are ordered by scheduled_for ASC (earliest first)."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -621,7 +621,7 @@ class TestListPendingForTicket:
 class TestMessageList:
     """Tests for listing messages."""
 
-    def test_list_for_customer_returns_all_statuses(self, db, as_test_user, message_service, test_customer):
+    def test_list_for_customer_returns_all_statuses(self, db, as_test_workspace, message_service, test_customer):
         """list_for_customer returns messages regardless of status."""
         from core.models import ScheduledMessageCreate, MessageType
 
@@ -655,7 +655,7 @@ class TestMessageList:
         assert sent.id in message_ids
         assert cancelled.id in message_ids
 
-    def test_list_for_customer_ordered_by_scheduled_for_desc(self, db, as_test_user, message_service, test_customer):
+    def test_list_for_customer_ordered_by_scheduled_for_desc(self, db, as_test_workspace, message_service, test_customer):
         """Messages are ordered by scheduled_for descending (newest first)."""
         from core.models import ScheduledMessageCreate, MessageType
 

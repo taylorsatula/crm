@@ -4,11 +4,11 @@ import pytest
 from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
-from utils.user_context import user_context
+from utils.workspace_context import workspace_context
 
-# Test user constants (must match conftest.py)
-TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
-TEST_USER_B_ID = UUID("00000000-0000-0000-0000-000000000002")
+# Test workspace constants (must match conftest.py)
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
+TEST_WORKSPACE_B_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 class TestPostgresClientInit:
@@ -30,16 +30,16 @@ class TestHealthCheck:
 class TestRLSContext:
     """Row Level Security context management."""
 
-    def test_sets_user_context_from_contextvar(self, db):
-        """User ID from contextvar is set in session config."""
-        with user_context(TEST_USER_ID):
-            result = db.execute_scalar("SELECT current_setting('app.current_user_id', true)")
-            assert result == str(TEST_USER_ID)
+    def test_sets_workspace_context_from_contextvar(self, db):
+        """Workspace ID from contextvar is set in session config."""
+        with workspace_context(TEST_WORKSPACE_ID):
+            result = db.execute_scalar("SELECT current_setting('app.current_workspace_id', true)")
+            assert result == str(TEST_WORKSPACE_ID)
 
-    def test_clears_context_without_user_id(self, db):
-        """No user context sets app.current_user_id to empty string."""
-        # Contextvar is cleared by reset_user_context fixture
-        result = db.execute_scalar("SELECT current_setting('app.current_user_id', true)")
+    def test_clears_context_without_workspace_id(self, db):
+        """No workspace context sets app.current_workspace_id to empty string."""
+        # Contextvar is cleared by reset_workspace_context fixture
+        result = db.execute_scalar("SELECT current_setting('app.current_workspace_id', true)")
         assert result == ""
 
 
@@ -77,70 +77,65 @@ class TestExecuteMethods:
         assert result is None
 
 
-class TestUserIsolation:
-    """RLS user isolation - the core security feature."""
+class TestWorkspaceIsolation:
+    """RLS workspace isolation - the core security feature."""
 
     def test_user_only_sees_own_data(self, db):
-        """User A cannot see User B's customers."""
+        """Workspace A cannot see workspace B's customers."""
         customer_a_id = uuid4()
         customer_b_id = uuid4()
 
-        # Insert customers for each user
-        with user_context(TEST_USER_ID):
+        # Insert customers for each workspace
+        with workspace_context(TEST_WORKSPACE_ID):
             db.execute(
-                "INSERT INTO customers (id, user_id, first_name, created_at, updated_at) "
+                "INSERT INTO customers (id, workspace_id, first_name, created_at, updated_at) "
                 "VALUES (%s, %s, %s, now(), now())",
-                (customer_a_id, TEST_USER_ID, "Alice"),
+                (customer_a_id, TEST_WORKSPACE_ID, "Alice"),
             )
 
-        with user_context(TEST_USER_B_ID):
+        with workspace_context(TEST_WORKSPACE_B_ID):
             db.execute(
-                "INSERT INTO customers (id, user_id, first_name, created_at, updated_at) "
+                "INSERT INTO customers (id, workspace_id, first_name, created_at, updated_at) "
                 "VALUES (%s, %s, %s, now(), now())",
-                (customer_b_id, TEST_USER_B_ID, "Bob"),
+                (customer_b_id, TEST_WORKSPACE_B_ID, "Bob"),
             )
 
-        # User A sees only their customer
-        with user_context(TEST_USER_ID):
+        # Workspace A sees only its customer
+        with workspace_context(TEST_WORKSPACE_ID):
             customers_a = db.execute("SELECT first_name FROM customers")
             assert len(customers_a) == 1
             assert customers_a[0]["first_name"] == "Alice"
 
-        # User B sees only their customer
-        with user_context(TEST_USER_B_ID):
+        # Workspace B sees only its customer
+        with workspace_context(TEST_WORKSPACE_B_ID):
             customers_b = db.execute("SELECT first_name FROM customers")
             assert len(customers_b) == 1
             assert customers_b[0]["first_name"] == "Bob"
 
-    def test_no_context_errors_on_rls_tables(self, db):
-        """Without user context, queries on RLS tables fail (fail-fast)."""
-        # Insert a customer as user A
-        with user_context(TEST_USER_ID):
+    def test_no_context_sees_no_rls_rows(self, db):
+        """Without workspace context, tenant policies expose no rows."""
+        with workspace_context(TEST_WORKSPACE_ID):
             db.execute(
-                "INSERT INTO customers (id, user_id, first_name, created_at, updated_at) "
+                "INSERT INTO customers (id, workspace_id, first_name, created_at, updated_at) "
                 "VALUES (%s, %s, %s, now(), now())",
-                (uuid4(), TEST_USER_ID, "Charlie"),
+                (uuid4(), TEST_WORKSPACE_ID, "Charlie"),
             )
 
-        # Without context, query fails - empty string can't cast to UUID
-        # This is intentional fail-fast behavior
-        import psycopg
-        with pytest.raises(psycopg.errors.InvalidTextRepresentation):
-            db.execute("SELECT first_name FROM customers")
+        assert db.execute("SELECT first_name FROM customers") == []
 
-    def test_cannot_see_other_users_data_by_id(self, db):
-        """Even with known ID, user cannot access another user's data."""
+    def test_cannot_see_other_workspace_data_by_id(self, db):
+        """Even with a known ID, a workspace cannot access another's data."""
         customer_id = uuid4()
 
-        # Create customer as User B
-        with user_context(TEST_USER_B_ID):
+        # Create customer as workspace B
+        with workspace_context(TEST_WORKSPACE_B_ID):
             db.execute(
-                "INSERT INTO customers (id, user_id, first_name, created_at, updated_at) "
+                "INSERT INTO customers (id, workspace_id, first_name, created_at, updated_at) "
                 "VALUES (%s, %s, %s, now(), now())",
-                (customer_id, TEST_USER_B_ID, "Secret"),
+                (customer_id, TEST_WORKSPACE_B_ID, "Secret"),
             )
 
-        # User A tries to fetch by ID - gets nothing
-        with user_context(TEST_USER_ID):
+        # Workspace A tries to fetch by ID - gets nothing
+        with workspace_context(TEST_WORKSPACE_ID):
             result = db.execute_single("SELECT first_name FROM customers WHERE id = %s", (customer_id,))
             assert result is None
