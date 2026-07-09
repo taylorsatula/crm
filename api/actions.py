@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from api.base import success_response
+from core.exceptions import NotFoundError
 from core.models import (
     CustomerCreate, CustomerUpdate,
     TicketCreate, TicketUpdate,
@@ -88,7 +89,7 @@ class CustomerHandler:
         customer_id = UUID(data["id"])
         deleted = self.service.delete(customer_id)
         if not deleted:
-            raise ValueError(f"Customer {customer_id} not found")
+            raise NotFoundError(f"Customer {customer_id} not found")
         return {"deleted": True}
 
 
@@ -111,7 +112,7 @@ class TicketHandler:
         ticket_id = UUID(data["id"])
         deleted = self.service.delete(ticket_id)
         if not deleted:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
         return {"deleted": True}
 
     def _handle_clock_in(self, data: dict):
@@ -127,9 +128,18 @@ class TicketHandler:
         return ticket.model_dump(mode="json")
 
     def _handle_closeout(self, data: dict):
+        raw_duration = data.get("confirmed_duration_minutes")
+        if raw_duration is None:
+            raise ValueError("closeout requires confirmed_duration_minutes")
+        try:
+            confirmed_duration_minutes = int(raw_duration)
+        except (TypeError, ValueError):
+            raise ValueError("confirmed_duration_minutes must be an integer")
+        if confirmed_duration_minutes < 1:
+            raise ValueError("confirmed_duration_minutes must be a positive integer")
         result = self.service.closeout(
             ticket_id=UUID(data["id"]),
-            confirmed_duration_minutes=int(data["confirmed_duration_minutes"]),
+            confirmed_duration_minutes=confirmed_duration_minutes,
             final_note=data.get("final_note"),
         )
         return result
@@ -158,7 +168,7 @@ class CatalogHandler:
         service_id = UUID(data["id"])
         deleted = self.service.delete(service_id)
         if not deleted:
-            raise ValueError(f"Service {service_id} not found")
+            raise NotFoundError(f"Service {service_id} not found")
         return {"deleted": True}
 
 
@@ -182,7 +192,7 @@ class LineItemHandler:
         line_item_id = UUID(data["id"])
         deleted = self.service.delete(line_item_id)
         if not deleted:
-            raise ValueError(f"Line item {line_item_id} not found")
+            raise NotFoundError(f"Line item {line_item_id} not found")
         return {"deleted": True}
 
 
@@ -226,7 +236,7 @@ class NoteHandler:
         note_id = UUID(data["id"])
         deleted = self.service.delete(note_id)
         if not deleted:
-            raise ValueError(f"Note {note_id} not found")
+            raise NotFoundError(f"Note {note_id} not found")
         return {"deleted": True}
 
 
@@ -244,7 +254,7 @@ class AttributeHandler:
         attr_id = UUID(data["id"])
         deleted = self.service.delete(attr_id)
         if not deleted:
-            raise ValueError(f"Attribute {attr_id} not found")
+            raise NotFoundError(f"Attribute {attr_id} not found")
         return {"deleted": True}
 
 
@@ -282,5 +292,5 @@ class AddressHandler:
         address_id = UUID(data["id"])
         deleted = self.service.delete(address_id)
         if not deleted:
-            raise ValueError(f"Address {address_id} not found")
+            raise NotFoundError(f"Address {address_id} not found")
         return {"deleted": True}
