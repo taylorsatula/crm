@@ -1,5 +1,4 @@
 """GET /api/data — unified read endpoint."""
-
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
@@ -201,7 +200,12 @@ def _handle_customers(
             data["invoices"] = [i.model_dump(mode="json") for i in invoices]
         if "notes" in includes:
             notes = note_svc.list_for_customer(customer.id, limit)
-            data["note_items"] = [n.model_dump(mode="json") for n in notes]
+            # Preserve the customer's free-text `notes` string field, then surface
+            # the note records under `notes` so the response key matches the
+            # include key (matching the ticket packet convention). Earlier this
+            # used the non-canonical `note_items` key.
+            data["customer_notes"] = data["notes"]
+            data["notes"] = [n.model_dump(mode="json") for n in notes]
         if "messages" in includes:
             messages = message_svc.list_for_customer(customer.id, limit)
             data["messages"] = [m.model_dump(mode="json") for m in messages]
@@ -212,13 +216,32 @@ def _handle_customers(
         return success_response(data, request_id=request_id).model_dump(mode="json")
 
     if search:
-        customers = customer_svc.search(search, limit)
-        return success_response(
-            [c.model_dump(mode="json") for c in customers],
-            request_id=request_id,
-        ).model_dump(mode="json")
+        customers = customer_svc.search(search, limit, offset)
+    else:
+        customers = customer_svc.list_all(limit, offset)
 
-    customers = customer_svc.list_all(limit, offset)
+    # Enrich with primary address (single batch query)
+    if customers:
+        customer_ids = [str(c.id) for c in customers]
+        placeholders = ",".join("%s" for _ in customer_ids)
+        rows = address_svc.postgres.execute(
+            f"""
+            SELECT customer_id, street FROM (
+                SELECT customer_id, street,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY customer_id
+                           ORDER BY label = 'Home' DESC, created_at ASC
+                       ) as rn
+                FROM addresses
+                WHERE customer_id IN ({placeholders})
+            ) ranked WHERE rn = 1
+            """,
+            tuple(customer_ids),
+        )
+        addr_map = {str(r["customer_id"]): r["street"] for r in rows}
+        for c in customers:
+            c.address = addr_map.get(str(c.id))
+
     return success_response(
         [c.model_dump(mode="json") for c in customers],
         request_id=request_id,
@@ -240,8 +263,10 @@ def _handle_tickets(
             data["line_items"] = [li.model_dump(mode="json") for li in items]
         if "notes" in includes:
             notes = note_svc.list_for_ticket(ticket.id)
+            # Preserve the ticket's free-text `notes` string as `job_notes`,
+            # then surface the note records under `notes` (canonical: matches the
+            # include key). `note_items` was a redundant non-canonical alias.
             data["job_notes"] = data["notes"]
-            data["note_items"] = [n.model_dump(mode="json") for n in notes]
             data["notes"] = [n.model_dump(mode="json") for n in notes]
         if "messages" in includes:
             messages = message_svc.list_pending_for_ticket(ticket.id)
@@ -472,6 +497,8 @@ def _ticket_packet(
     items = line_item_svc.list_for_ticket(ticket.id)
     line_items = _line_item_payloads(items, catalog_svc)
     notes = note_svc.list_for_ticket(ticket.id)
+    customer_addresses = address_svc.list_for_customer(customer.id)
+    catalog_services = catalog_svc.list_all()
     messages = message_svc.list_pending_for_ticket(ticket.id)
     invoices = [
         invoice
@@ -479,12 +506,14 @@ def _ticket_packet(
         if invoice.ticket_id == ticket.id
     ]
 
-    total_price_cents = sum(item["total_price_cents"] for item in line_items)
+    total_price_cents = sum(item["total_price_cents"] or 0 for item in line_items)
 
     return {
         "ticket": ticket.model_dump(mode="json"),
         "customer": _customer_summary(customer),
         "address": _address_summary(address),
+        "addresses": [_address_summary(a) for a in customer_addresses],
+        "services": [s.model_dump(mode="json") for s in catalog_services if s.is_active],
         "line_items": line_items,
         "scope_summary": _scope_summary(line_items),
         "total_price_cents": total_price_cents,

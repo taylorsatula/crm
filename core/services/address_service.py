@@ -10,8 +10,9 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.exceptions import NotFoundError, AddressInUseError
 from core.models import Address, AddressCreate, AddressUpdate
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,14 @@ class AddressService:
         Returns:
             Created address
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
         address_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO addresses (
-                id, user_id, customer_id,
+                id, workspace_id, customer_id,
                 label, street, street2, city, state, zip,
                 notes, is_primary, created_at, updated_at
             ) VALUES (
@@ -57,7 +58,7 @@ class AddressService:
             RETURNING *
             """,
             (
-                address_id, user_id, data.customer_id,
+                address_id, workspace_id, data.customer_id,
                 data.label, data.street, data.street2, data.city, data.state, data.zip,
                 data.notes, data.is_primary, now, now
             )
@@ -131,7 +132,7 @@ class AddressService:
         """
         current = self.get_by_id(address_id)
         if current is None:
-            raise ValueError(f"Address {address_id} not found")
+            raise NotFoundError(f"Address {address_id} not found")
 
         updates = data.model_dump(exclude_none=True)
         if not updates:
@@ -197,6 +198,20 @@ class AddressService:
         current = self.get_by_id(address_id)
         if current is None:
             return False
+
+        # Reject deletion when any ticket references this address. tickets.address_id
+        # is `UUID NOT NULL REFERENCES addresses(id)` with no ON DELETE clause, so an
+        # unguarded hard delete raises an opaque FK violation (INTERNAL_ERROR/500).
+        # Count all tickets including soft-deleted ones; the FK constraint ignores
+        # soft deletes, so a deleted ticket still blocks address deletion.
+        referencing = self.postgres.execute_single(
+            "SELECT COUNT(*) AS n FROM tickets WHERE address_id = %s",
+            (address_id,)
+        )
+        if referencing is not None and referencing["n"] > 0:
+            raise AddressInUseError(
+                f"Address {address_id} is in use by one or more tickets and cannot be deleted"
+            )
 
         self.postgres.execute(
             "DELETE FROM addresses WHERE id = %s",

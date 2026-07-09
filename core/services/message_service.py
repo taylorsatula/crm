@@ -11,8 +11,9 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction
+from core.exceptions import NotFoundError, InvalidStatusTransitionError
 from core.models import ScheduledMessage, ScheduledMessageCreate, MessageStatus
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,29 @@ class MessageService:
         Returns:
             Scheduled message in PENDING status
         """
-        user_id = get_current_user_id()
+        # If a ticket is referenced, it must exist and belong to the given
+        # customer. Without this, a message can be attached to another
+        # customer's ticket and emailed to the wrong person when it falls due.
+        if data.ticket_id is not None:
+            ticket = self.postgres.execute_single(
+                "SELECT customer_id FROM tickets WHERE id = %s AND deleted_at IS NULL",
+                (data.ticket_id,)
+            )
+            if ticket is None:
+                raise NotFoundError(f"Ticket {data.ticket_id} not found")
+            if str(ticket["customer_id"]) != str(data.customer_id):
+                raise ValueError(
+                    f"Ticket {data.ticket_id} does not belong to customer {data.customer_id}"
+                )
+
+        workspace_id = get_current_workspace_id()
         message_id = uuid4()
         now = now_utc()
 
         row = self.postgres.execute_returning(
             """
             INSERT INTO scheduled_messages (
-                id, user_id, customer_id, ticket_id,
+                id, workspace_id, customer_id, ticket_id,
                 message_type, template_name, subject, body,
                 scheduled_for, status, created_at
             ) VALUES (
@@ -53,7 +69,7 @@ class MessageService:
             RETURNING *
             """,
             (
-                message_id, user_id, data.customer_id, data.ticket_id,
+                message_id, workspace_id, data.customer_id, data.ticket_id,
                 data.message_type.value, data.template_name, data.subject, data.body,
                 data.scheduled_for, MessageStatus.PENDING.value, now
             )
@@ -223,10 +239,10 @@ class MessageService:
         """
         current = self.get_by_id(message_id)
         if current is None:
-            raise ValueError(f"Message {message_id} not found")
+            raise NotFoundError(f"Message {message_id} not found")
 
         if current.status != MessageStatus.PENDING:
-            raise ValueError(f"Message {message_id} is not pending")
+            raise InvalidStatusTransitionError(f"Message {message_id} is not pending")
 
         row = self.postgres.execute_returning(
             """

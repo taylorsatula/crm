@@ -10,15 +10,16 @@ from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
 from core.audit import AuditLogger, AuditAction, compute_changes
+from core.exceptions import NotFoundError, TicketImmutableError
 from core.models import LineItem, LineItemCreate, LineItemUpdate, TicketStatus
-from utils.user_context import get_current_user_id
+from utils.workspace_context import get_current_workspace_id
 from utils.timezone import now_utc
 
 logger = logging.getLogger(__name__)
 
 _UPDATABLE_COLUMNS = {
     "description", "quantity", "unit_price_cents",
-    "total_price_cents", "duration_minutes"
+    "total_price_cents", "duration_minutes", "notes"
 }
 
 
@@ -43,7 +44,7 @@ class LineItemService:
         Raises:
             ValueError: If ticket is closed/cancelled or not found
         """
-        user_id = get_current_user_id()
+        workspace_id = get_current_workspace_id()
 
         # Check ticket status
         ticket = self.postgres.execute_single(
@@ -51,13 +52,13 @@ class LineItemService:
             (ticket_id,)
         )
         if ticket is None:
-            raise ValueError(f"Ticket {ticket_id} not found")
+            raise NotFoundError(f"Ticket {ticket_id} not found")
 
         ticket_status = TicketStatus(ticket["status"])
         if ticket_status == TicketStatus.COMPLETED:
-            raise ValueError(f"Ticket {ticket_id} is closed")
+            raise TicketImmutableError(f"Ticket {ticket_id} is closed")
         if ticket_status == TicketStatus.CANCELLED:
-            raise ValueError(f"Ticket {ticket_id} is cancelled")
+            raise TicketImmutableError(f"Ticket {ticket_id} is cancelled")
 
         # If no price provided, fetch default from service
         total_price_cents = data.total_price_cents
@@ -74,15 +75,14 @@ class LineItemService:
                     (data.service_id,)
                 )
                 if service is None:
-                    raise ValueError(f"Service {data.service_id} not found")
+                    raise NotFoundError(f"Service {data.service_id} not found")
 
                 if service["default_price_cents"] is not None:
                     total_price_cents = service["default_price_cents"]
                 elif service["unit_price_cents"] is not None:
                     unit_price_cents = service["unit_price_cents"]
                     total_price_cents = data.quantity * unit_price_cents
-                else:
-                    raise ValueError(f"Service {data.service_id} has no default price")
+                # else: total_price_cents stays None for flexible-price services
 
         line_item_id = uuid4()
         now = now_utc()
@@ -90,20 +90,20 @@ class LineItemService:
         row = self.postgres.execute_returning(
             """
             INSERT INTO line_items (
-                id, user_id, ticket_id, service_id,
+                id, workspace_id, ticket_id, service_id,
                 description, quantity, unit_price_cents, total_price_cents,
-                duration_minutes, created_at, updated_at
+                duration_minutes, notes, created_at, updated_at
             ) VALUES (
                 %s, %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s
+                %s, %s, %s, %s
             )
             RETURNING *
             """,
             (
-                line_item_id, user_id, ticket_id, data.service_id,
+                line_item_id, workspace_id, ticket_id, data.service_id,
                 data.description, data.quantity, unit_price_cents, total_price_cents,
-                data.duration_minutes, now, now
+                data.duration_minutes, data.notes, now, now
             )
         )[0]
 
@@ -154,7 +154,7 @@ class LineItemService:
         """
         current = self.get_by_id(line_item_id)
         if current is None:
-            raise ValueError(f"Line item {line_item_id} not found")
+            raise NotFoundError(f"Line item {line_item_id} not found")
 
         # Check ticket status
         ticket = self.postgres.execute_single(
@@ -162,13 +162,13 @@ class LineItemService:
             (current.ticket_id,)
         )
         if ticket is None:
-            raise ValueError(f"Ticket {current.ticket_id} not found")
+            raise NotFoundError(f"Ticket {current.ticket_id} not found")
 
         ticket_status = TicketStatus(ticket["status"])
         if ticket_status == TicketStatus.COMPLETED:
-            raise ValueError(f"Ticket {current.ticket_id} is closed")
+            raise TicketImmutableError(f"Ticket {current.ticket_id} is closed")
         if ticket_status == TicketStatus.CANCELLED:
-            raise ValueError(f"Ticket {current.ticket_id} is cancelled")
+            raise TicketImmutableError(f"Ticket {current.ticket_id} is cancelled")
 
         updates = data.model_dump(exclude_none=True)
         if not updates:
@@ -183,6 +183,20 @@ class LineItemService:
         valid_updates = {k: v for k, v in updates.items() if k in _UPDATABLE_COLUMNS}
         if not valid_updates:
             return current
+
+        # Recompute total_price_cents when a pricing driver (unit_price_cents or
+        # quantity) changes and the caller did not explicitly set total_price_cents.
+        # Mirrors LineItemCreate's auto-compute. An explicit total_price_cents is
+        # preserved; updates that don't touch pricing (e.g. duration, notes) leave
+        # an existing custom total intact. Flexible-price lines (unit_price_cents
+        # None) are skipped since there is nothing to multiply.
+        if "total_price_cents" not in valid_updates and (
+            "unit_price_cents" in valid_updates or "quantity" in valid_updates
+        ):
+            new_unit = valid_updates.get("unit_price_cents", current.unit_price_cents)
+            new_qty = valid_updates.get("quantity", current.quantity)
+            if new_unit is not None and new_qty is not None:
+                valid_updates["total_price_cents"] = new_qty * new_unit
 
         set_parts = []
         params = []
