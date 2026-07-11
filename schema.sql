@@ -59,6 +59,7 @@ $$ LANGUAGE plpgsql;
 -- -----------------------------------------------------------------------------
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -67,6 +68,91 @@ ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
 CREATE POLICY workspaces_isolation ON workspaces FOR ALL
     USING (id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
     WITH CHECK (id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
+
+
+-- -----------------------------------------------------------------------------
+-- workspace_access_tokens
+-- -----------------------------------------------------------------------------
+-- Pre-auth token lookup table. Only SHA-256 token hashes are persisted; the raw
+-- token is returned exactly once by the lifecycle API. This table intentionally
+-- has no RLS because token validation happens before workspace context exists.
+-- -----------------------------------------------------------------------------
+CREATE TABLE workspace_access_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    scopes TEXT[] NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    CONSTRAINT workspace_access_tokens_expiry CHECK (
+        expires_at IS NULL OR expires_at > issued_at
+    ),
+    CONSTRAINT workspace_access_tokens_scopes CHECK (
+        cardinality(scopes) > 0
+        AND scopes <@ ARRAY['read', 'write']::TEXT[]
+    )
+);
+
+CREATE INDEX idx_workspace_access_tokens_active_hash
+    ON workspace_access_tokens(token_hash)
+    WHERE revoked_at IS NULL;
+CREATE INDEX idx_workspace_access_tokens_workspace
+    ON workspace_access_tokens(workspace_id, issued_at DESC);
+
+
+-- -----------------------------------------------------------------------------
+-- workspace_settings
+-- -----------------------------------------------------------------------------
+-- Operational defaults consumed by CRM scheduling and outbound-message flows.
+-- Account authentication, MIRA knowledge, and tool credentials remain in MIRA.
+-- -----------------------------------------------------------------------------
+CREATE TABLE workspace_settings (
+    workspace_id UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+    business_name TEXT NOT NULL DEFAULT 'MIRA Field Services',
+    business_phone TEXT,
+    reply_to_email TEXT,
+    workday_start TIME NOT NULL DEFAULT '08:00',
+    workday_end TIME NOT NULL DEFAULT '17:00',
+    working_days TEXT[] NOT NULL DEFAULT ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
+    default_appointment_minutes INTEGER NOT NULL DEFAULT 120,
+    travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,
+    appointment_confirmation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    appointment_reminder_minutes INTEGER DEFAULT 1440,
+    service_reminder_mode TEXT NOT NULL DEFAULT 'ask_each_time',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT workspace_settings_workday CHECK (workday_start < workday_end),
+    CONSTRAINT workspace_settings_days CHECK (
+        cardinality(working_days) > 0
+        AND working_days <@ ARRAY['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']::TEXT[]
+    ),
+    CONSTRAINT workspace_settings_appointment CHECK (
+        default_appointment_minutes IN (60, 120, 180, 240)
+    ),
+    CONSTRAINT workspace_settings_travel_buffer CHECK (
+        travel_buffer_minutes IN (0, 30, 45, 60)
+    ),
+    CONSTRAINT workspace_settings_reminder CHECK (
+        appointment_reminder_minutes IS NULL
+        OR appointment_reminder_minutes IN (120, 1440, 2880)
+    ),
+    CONSTRAINT workspace_settings_service_reminder CHECK (
+        service_reminder_mode IN ('ask_each_time', 'six_months', 'one_year', 'off')
+    )
+);
+
+CREATE TRIGGER workspace_settings_updated_at
+    BEFORE UPDATE ON workspace_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE workspace_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY workspace_settings_isolation ON workspace_settings FOR ALL
+    USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid)
+    WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid);
 
 
 -- -----------------------------------------------------------------------------
