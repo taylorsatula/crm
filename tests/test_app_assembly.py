@@ -118,8 +118,12 @@ def test_legacy_public_routes_are_absent_when_authenticated():
 
 def test_event_bus_subscriptions_are_wired():
     event_bus = EventBus()
-    handlers = wire_event_handlers(event_bus, FakeService(), {"attribute": FakeService(), "note": FakeService(), "message": FakeService()})
-    assert set(handlers) == {"TicketCompleted", "TicketCancelled", "InvoicePaid"}
+    handlers = wire_event_handlers(event_bus, FakeService(), {
+        "attribute": FakeService(), "note": FakeService(), "message": FakeService(),
+        "workspace_settings": FakeService(),
+    })
+    assert set(handlers) == {"TicketCreated", "TicketCompleted", "TicketCancelled", "InvoicePaid"}
+    assert len(handlers["TicketCompleted"]) == 2
 
 
 def test_docs_can_only_be_enabled_explicitly_for_private_development():

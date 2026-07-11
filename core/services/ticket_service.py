@@ -22,6 +22,7 @@ from core.exceptions import (
     InvalidStatusTransitionError,
 )
 from core.models import Ticket, TicketCreate, TicketUpdate, TicketStatus, ConfirmationStatus
+from core.services.workspace_settings_service import WorkspaceSettingsService
 from utils.workspace_context import get_current_workspace_id, get_current_workspace_timezone
 from utils.timezone import now_utc
 
@@ -47,6 +48,60 @@ class TicketService:
         self.audit = audit
         self.event_bus = event_bus
 
+    def _validate_schedule(
+        self,
+        *,
+        scheduled_at: datetime,
+        duration_minutes: int,
+        excluding_ticket_id: UUID | None = None,
+    ) -> None:
+        """Enforce the active workspace's workday, buffer, and booking rules."""
+        if scheduled_at.tzinfo is None:
+            raise ValueError("scheduled_at must include a timezone offset")
+
+        workspace_id = get_current_workspace_id()
+        settings = WorkspaceSettingsService(self.postgres).get()
+        local_start = scheduled_at.astimezone(ZoneInfo(get_current_workspace_timezone()))
+        weekday = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[local_start.weekday()]
+        buffered_end = local_start + timedelta(
+            minutes=duration_minutes + settings.travel_buffer_minutes
+        )
+
+        if weekday not in settings.working_days:
+            raise ValueError(f"Appointments cannot be scheduled on {weekday}")
+        if (
+            local_start.time() < settings.workday_start
+            or buffered_end.date() != local_start.date()
+            or buffered_end.time() > settings.workday_end
+        ):
+            raise ValueError("Appointment and travel buffer must fit inside the configured workday")
+
+        query = """
+            SELECT id
+            FROM tickets
+            WHERE workspace_id = %s
+              AND deleted_at IS NULL
+              AND status IN ('scheduled', 'in_progress')
+              AND scheduled_at < %s
+              AND scheduled_at
+                    + (COALESCE(scheduled_duration_minutes, %s) + %s) * INTERVAL '1 minute'
+                    > %s
+        """
+        params: list[object] = [
+            workspace_id,
+            scheduled_at + timedelta(minutes=duration_minutes + settings.travel_buffer_minutes),
+            settings.default_appointment_minutes,
+            settings.travel_buffer_minutes,
+            scheduled_at,
+        ]
+        if excluding_ticket_id is not None:
+            query += " AND id <> %s"
+            params.append(excluding_ticket_id)
+        query += " LIMIT 1"
+        conflict = self.postgres.execute_single(query, tuple(params))
+        if conflict is not None:
+            raise ValueError("Appointment conflicts with an existing appointment or travel buffer")
+
     def create(self, data: TicketCreate) -> Ticket:
         """
         Create a new ticket.
@@ -60,6 +115,16 @@ class TicketService:
         workspace_id = get_current_workspace_id()
         ticket_id = uuid4()
         now = now_utc()
+        settings = WorkspaceSettingsService(self.postgres).get()
+        duration_minutes = (
+            data.scheduled_duration_minutes
+            if data.scheduled_duration_minutes is not None
+            else settings.default_appointment_minutes
+        )
+        self._validate_schedule(
+            scheduled_at=data.scheduled_at,
+            duration_minutes=duration_minutes,
+        )
 
         row = self.postgres.execute_returning(
             """
@@ -78,7 +143,7 @@ class TicketService:
             """,
             (
                 ticket_id, workspace_id, data.customer_id, data.address_id,
-                TicketStatus.SCHEDULED.value, data.scheduled_at, data.scheduled_duration_minutes,
+                TicketStatus.SCHEDULED.value, data.scheduled_at, duration_minutes,
                 ConfirmationStatus.PENDING.value, data.is_price_estimated, data.notes,
                 now, now
             )
@@ -90,7 +155,12 @@ class TicketService:
             entity_type="ticket",
             entity_id=ticket.id,
             action=AuditAction.CREATE,
-            changes={"created": data.model_dump(mode="json", exclude_none=True)}
+            changes={
+                "created": {
+                    **data.model_dump(mode="json", exclude_none=True),
+                    "scheduled_duration_minutes": duration_minutes,
+                }
+            }
         )
 
         self.event_bus.publish(TicketCreated.create(ticket=ticket))
@@ -155,6 +225,17 @@ class TicketService:
         valid_updates = {k: v for k, v in updates.items() if k in _UPDATABLE_COLUMNS}
         if not valid_updates:
             return current
+
+        if "scheduled_at" in valid_updates or "scheduled_duration_minutes" in valid_updates:
+            self._validate_schedule(
+                scheduled_at=valid_updates.get("scheduled_at", current.scheduled_at),
+                duration_minutes=valid_updates.get(
+                    "scheduled_duration_minutes",
+                    current.scheduled_duration_minutes
+                    or WorkspaceSettingsService(self.postgres).get().default_appointment_minutes,
+                ),
+                excluding_ticket_id=ticket_id,
+            )
 
         set_parts = []
         params = []

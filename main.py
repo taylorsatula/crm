@@ -35,6 +35,10 @@ from core.services.message_service import MessageService
 from core.services.note_service import NoteService
 from core.services.ticket_service import TicketService
 from core.services.workspace_settings_service import WorkspaceSettingsService
+from core.handlers.ticket_message_handler import (
+    handle_ticket_completed_messages,
+    handle_ticket_created_messages,
+)
 
 
 @dataclass
@@ -44,7 +48,7 @@ class AppContainer:
     clients: dict[str, Any]
     services: dict[str, Any]
     event_bus: EventBus
-    event_handlers: dict[str, Callable]
+    event_handlers: dict[str, list[Callable]]
     health_checks: dict[str, Any]
     lifecycle_service_secret: str
 
@@ -94,15 +98,22 @@ def wire_event_handlers(
     event_bus: EventBus,
     extractor: AttributeExtractor,
     services: dict[str, Any],
-) -> dict[str, Callable]:
-    """Subscribe retained domain handlers to the in-process event bus."""
+) -> dict[str, list[Callable]]:
+    """Subscribe lifecycle handlers to the in-process event bus."""
     handlers = {
-        "TicketCompleted": handle_ticket_completed(extractor, services["attribute"], services["note"]),
-        "TicketCancelled": handle_ticket_cancelled(services["message"]),
-        "InvoicePaid": handle_invoice_paid(services["message"]),
+        "TicketCreated": [
+            handle_ticket_created_messages(services["message"], services["workspace_settings"]),
+        ],
+        "TicketCompleted": [
+            handle_ticket_completed(extractor, services["attribute"], services["note"]),
+            handle_ticket_completed_messages(services["message"], services["workspace_settings"]),
+        ],
+        "TicketCancelled": [handle_ticket_cancelled(services["message"])],
+        "InvoicePaid": [handle_invoice_paid(services["message"])],
     }
-    for event_name, handler in handlers.items():
-        event_bus.subscribe(event_name, handler)
+    for event_name, subscribers in handlers.items():
+        for subscriber in subscribers:
+            event_bus.subscribe(event_name, subscriber)
     return handlers
 
 
