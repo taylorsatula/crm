@@ -108,6 +108,8 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 - **Raw SQL**: Explicit queries over ORM for clarity and performance
 - **UUID Primary Keys**: Enable distributed ID generation
 - **Soft Deletes Where Appropriate**: For audit trail on business entities
+- **Workspace Settings Ownership**: `workspace_settings` is the RLS-protected one-to-one canonical record for scheduling and outbound-message defaults. Workspace timezone remains on `workspaces` and updates atomically with the settings record; MIRA owns tenant business identity.
+- **Scheduling Defaults**: `TicketService` enforces the current workspace workday, travel buffer, and booking conflicts, then publishes lifecycle events. `ticket_message_handler.py` turns CRM-owned confirmation, appointment-reminder, and service-reminder defaults into scheduled messages.
 
 ### Frontend Design
 - **Vanilla HTML/CSS/JS**: No framework overhead, minimal bundle size

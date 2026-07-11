@@ -16,6 +16,7 @@ from core.models import (
     NoteCreate,
     ScheduledMessageCreate,
     AttributeCreate,
+    WorkspaceSettingsUpdate,
 )
 
 
@@ -38,6 +39,7 @@ def create_actions_router(services: dict) -> APIRouter:
         "attribute": AttributeHandler(services["attribute"]),
         "message": MessageHandler(services["message"]),
         "address": AddressHandler(services["address"]),
+        "workspace_settings": WorkspaceSettingsHandler(services["workspace_settings"]),
     }
 
     @router.post("/actions")
@@ -63,6 +65,19 @@ def create_actions_router(services: dict) -> APIRouter:
         ).model_dump(mode="json")
 
     return router
+
+
+class WorkspaceSettingsHandler:
+    """Update the current workspace's operational defaults."""
+
+    ALLOWED_ACTIONS = {"update"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_update(self, data: dict):
+        settings = self.service.update(WorkspaceSettingsUpdate(**data))
+        return settings.model_dump(mode="json")
 
 
 # =============================================================================

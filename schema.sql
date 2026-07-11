@@ -107,13 +107,10 @@ CREATE INDEX idx_workspace_access_tokens_workspace
 -- workspace_settings
 -- -----------------------------------------------------------------------------
 -- Operational defaults consumed by CRM scheduling and outbound-message flows.
--- Account authentication, MIRA knowledge, and tool credentials remain in MIRA.
+-- MIRA owns tenant business identity, knowledge, and tool credentials.
 -- -----------------------------------------------------------------------------
 CREATE TABLE workspace_settings (
     workspace_id UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
-    business_name TEXT NOT NULL DEFAULT 'MIRA Field Services',
-    business_phone TEXT,
-    reply_to_email TEXT,
     workday_start TIME NOT NULL DEFAULT '08:00',
     workday_end TIME NOT NULL DEFAULT '17:00',
     working_days TEXT[] NOT NULL DEFAULT ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
@@ -128,6 +125,13 @@ CREATE TABLE workspace_settings (
     CONSTRAINT workspace_settings_days CHECK (
         cardinality(working_days) > 0
         AND working_days <@ ARRAY['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']::TEXT[]
+        AND cardinality(array_positions(working_days, 'mon')) <= 1
+        AND cardinality(array_positions(working_days, 'tue')) <= 1
+        AND cardinality(array_positions(working_days, 'wed')) <= 1
+        AND cardinality(array_positions(working_days, 'thu')) <= 1
+        AND cardinality(array_positions(working_days, 'fri')) <= 1
+        AND cardinality(array_positions(working_days, 'sat')) <= 1
+        AND cardinality(array_positions(working_days, 'sun')) <= 1
     ),
     CONSTRAINT workspace_settings_appointment CHECK (
         default_appointment_minutes IN (60, 120, 180, 240)

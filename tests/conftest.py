@@ -149,7 +149,18 @@ def reset_db_state(request):
 
 
 @pytest.fixture
-def as_test_workspace(test_workspace_id):
+def as_test_workspace(test_workspace_id, db):
+    db.execute(
+        """
+        UPDATE workspace_settings
+        SET workday_start = '00:00',
+            workday_end = '23:59',
+            working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']::TEXT[],
+            travel_buffer_minutes = 0
+        WHERE workspace_id = %s
+        """,
+        (test_workspace_id,),
+    )
     with workspace_context(test_workspace_id, "America/Chicago"):
         yield test_workspace_id
 

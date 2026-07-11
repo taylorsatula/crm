@@ -10,6 +10,7 @@ from core.models.note import Note, NoteCreate
 from core.models.attribute import Attribute, AttributeCreate, ExtractedAttributes
 from core.models.scheduled_message import ScheduledMessage, ScheduledMessageCreate, MessageStatus, MessageType
 from core.models.lead import Lead, LeadCreate, LeadUpdate, LeadStatus, LeadSource, LeadUrgency
+from core.models.workspace_settings import WorkspaceSettings, WorkspaceSettingsUpdate
 
 __all__ = [
     # Customer
@@ -32,4 +33,6 @@ __all__ = [
     "ScheduledMessage", "ScheduledMessageCreate", "MessageStatus", "MessageType",
     # Lead
     "Lead", "LeadCreate", "LeadUpdate", "LeadStatus", "LeadSource", "LeadUrgency",
+    # Workspace settings
+    "WorkspaceSettings", "WorkspaceSettingsUpdate",
 ]

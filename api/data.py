@@ -15,6 +15,7 @@ VALID_TYPES = {
     "notes",
     "services",
     "tickets",
+    "workspace_settings",
 }
 
 
@@ -30,6 +31,7 @@ def create_data_router(services: dict) -> APIRouter:
     address_svc = services["address"]
     message_svc = services["message"]
     attribute_svc = services["attribute"]
+    workspace_settings_svc = services["workspace_settings"]
 
     # -------------------------------------------------------------------------
     # Convenience routes (must be registered before the generic /data route)
@@ -126,6 +128,12 @@ def create_data_router(services: dict) -> APIRouter:
             raise ValueError(f"Unknown type '{type}'. Valid types: {', '.join(sorted(VALID_TYPES))}")
 
         includes = set(include.split(",")) if include else set()
+
+        if type == "workspace_settings":
+            return success_response(
+                workspace_settings_svc.get().model_dump(mode="json"),
+                request_id=request.state.request_id,
+            ).model_dump(mode="json")
 
         if type == "customers":
             return _handle_customers(
