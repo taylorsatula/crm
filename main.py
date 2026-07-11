@@ -12,7 +12,7 @@ from api.actions import create_actions_router
 from api.data import create_data_router
 from api.errors import register_error_handlers
 from api.health import create_health_router
-from api.middleware import InternalWorkspaceMiddleware, RequestIDMiddleware
+from api.middleware import RequestIDMiddleware, WorkspaceAccessMiddleware
 from api.workspace import create_workspace_router
 from clients.email_client import EmailGatewayClient
 from clients.llm_client import LLMClient
@@ -34,6 +34,7 @@ from core.services.line_item_service import LineItemService
 from core.services.message_service import MessageService
 from core.services.note_service import NoteService
 from core.services.ticket_service import TicketService
+from core.services.workspace_settings_service import WorkspaceSettingsService
 
 
 @dataclass
@@ -45,7 +46,7 @@ class AppContainer:
     event_bus: EventBus
     event_handlers: dict[str, Callable]
     health_checks: dict[str, Any]
-    internal_service_secret: str
+    lifecycle_service_secret: str
 
     def close(self) -> None:
         """Close external connections owned by the app."""
@@ -74,7 +75,7 @@ class _ContainerProxy:
 def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
     names = (
         "customer", "ticket", "catalog", "line_item", "invoice", "note",
-        "attribute", "message", "address",
+        "attribute", "message", "address", "workspace_settings",
     )
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.services[key])
@@ -109,9 +110,9 @@ def build_app_container() -> AppContainer:
     """Build the production container; required Vault data fails startup loudly."""
     load_dotenv(override=True)
     vault = VaultClient()
-    internal_service_secret = vault.get_secret("internal", "service_secret")
-    if not isinstance(internal_service_secret, str) or not internal_service_secret:
-        raise ValueError("Vault secret crm/internal.service_secret must be a non-empty string")
+    lifecycle_service_secret = vault.get_secret("lifecycle", "service_secret")
+    if not isinstance(lifecycle_service_secret, str) or not lifecycle_service_secret:
+        raise ValueError("Vault secret crm/lifecycle.service_secret must be a non-empty string")
 
     postgres = PostgresClient(vault.get_secret("database", "url"))
     email_client = EmailGatewayClient(
@@ -133,6 +134,7 @@ def build_app_container() -> AppContainer:
         "attribute": AttributeService(postgres, audit),
         "message": MessageService(postgres, audit),
         "address": AddressService(postgres, audit),
+        "workspace_settings": WorkspaceSettingsService(postgres),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
     clients = {"database": postgres, "vault": vault, "llm": llm, "email": email_client}
@@ -142,7 +144,7 @@ def build_app_container() -> AppContainer:
         event_bus=event_bus,
         event_handlers=event_handlers,
         health_checks=clients,
-        internal_service_secret=internal_service_secret,
+        lifecycle_service_secret=lifecycle_service_secret,
     )
 
 
@@ -188,8 +190,9 @@ def create_app(
         prefix="/api",
     )
     app.add_middleware(
-        InternalWorkspaceMiddleware,
-        internal_service_secret=lambda: container_ref.get().internal_service_secret,
+        WorkspaceAccessMiddleware,
+        postgres=lambda: container_ref.get().clients["database"],
+        lifecycle_service_secret=lambda: container_ref.get().lifecycle_service_secret,
     )
     app.add_middleware(RequestIDMiddleware)
     register_error_handlers(app)
