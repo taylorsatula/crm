@@ -1,5 +1,6 @@
 """Shared fixtures for the workspace-scoped CRM test suite."""
 
+import hashlib
 from pathlib import Path
 from uuid import UUID
 
@@ -17,6 +18,8 @@ from utils.workspace_context import clear_workspace_context, workspace_context
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
 TEST_WORKSPACE_B_ID = UUID("00000000-0000-0000-0000-000000000002")
+TEST_WORKSPACE_TOKEN = "crm_ws_test_workspace_a"
+TEST_WORKSPACE_B_TOKEN = "crm_ws_test_workspace_b"
 
 
 @pytest.fixture(autouse=True)
@@ -122,8 +125,25 @@ def reset_db_state(request):
     db_admin = request.getfixturevalue("db_admin")
     db_admin.execute("DELETE FROM workspaces WHERE id IN (%s, %s)", (TEST_WORKSPACE_ID, TEST_WORKSPACE_B_ID))
     db_admin.execute(
-        "INSERT INTO workspaces (id) VALUES (%s), (%s)",
+        "INSERT INTO workspaces (id, timezone) VALUES (%s, 'America/Chicago'), (%s, 'America/Chicago')",
         (TEST_WORKSPACE_ID, TEST_WORKSPACE_B_ID),
+    )
+    db_admin.execute(
+        "INSERT INTO workspace_settings (workspace_id) VALUES (%s), (%s)",
+        (TEST_WORKSPACE_ID, TEST_WORKSPACE_B_ID),
+    )
+    db_admin.execute(
+        """
+        INSERT INTO workspace_access_tokens (workspace_id, token_hash, name, scopes)
+        VALUES (%s, %s, 'test-a', ARRAY['read', 'write']),
+               (%s, %s, 'test-b', ARRAY['read', 'write'])
+        """,
+        (
+            TEST_WORKSPACE_ID,
+            hashlib.sha256(TEST_WORKSPACE_TOKEN.encode()).hexdigest(),
+            TEST_WORKSPACE_B_ID,
+            hashlib.sha256(TEST_WORKSPACE_B_TOKEN.encode()).hexdigest(),
+        ),
     )
     yield
 
@@ -218,9 +238,17 @@ def address_service(db, audit):
 
 
 @pytest.fixture
+def workspace_settings_service(db):
+    from core.services.workspace_settings_service import WorkspaceSettingsService
+
+    return WorkspaceSettingsService(db)
+
+
+@pytest.fixture
 def services(
     customer_service, ticket_service, catalog_service, line_item_service,
     invoice_service, note_service, attribute_service, message_service, address_service,
+    workspace_settings_service,
 ):
     return {
         "customer": customer_service,
@@ -232,4 +260,5 @@ def services(
         "attribute": attribute_service,
         "message": message_service,
         "address": address_service,
+        "workspace_settings": workspace_settings_service,
     }
