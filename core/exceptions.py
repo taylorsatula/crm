@@ -46,12 +46,14 @@ class DomainError(ValueError):
         *,
         code: Optional[str] = None,
         http_status: Optional[int] = None,
+        details: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message)
         if code is not None:
             self.code = code
         if http_status is not None:
             self.http_status = http_status
+        self.details = details
 
     def __str__(self) -> str:
         return super().__str__()
@@ -89,6 +91,20 @@ class InvalidStatusTransitionError(DomainError):
     """A requested state transition is not allowed for the current status."""
 
     code = "INVALID_STATUS_TRANSITION"
+    http_status = 409
+
+
+class TicketScheduleUnavailableError(DomainError):
+    """A requested appointment falls outside the configured booking window."""
+
+    code = "TICKET_SCHEDULE_UNAVAILABLE"
+    http_status = 409
+
+
+class TicketScheduleConflictError(DomainError):
+    """A requested appointment overlaps another appointment or its travel buffer."""
+
+    code = "TICKET_SCHEDULE_CONFLICT"
     http_status = 409
 
 

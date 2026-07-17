@@ -4,10 +4,11 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
 from api.base import error_response, ErrorCodes
-from core.exceptions import DomainError, NotFoundError
+from core.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,30 @@ def register_error_handlers(app: FastAPI) -> None:
     def _request_id(request: Request) -> str | None:
         return getattr(request.state, "request_id", None)
 
+    def _validation_response(
+        request: Request,
+        exc: RequestValidationError | ValidationError,
+    ) -> JSONResponse:
+        errors = [
+            {
+                "field": ".".join(str(part) for part in error["loc"]),
+                "message": error["msg"],
+                "type": error["type"],
+            }
+            for error in exc.errors()
+        ]
+        fields = ", ".join(error["field"] for error in errors)
+        message = f"Request validation failed for: {fields}" if fields else "Request validation failed"
+        return JSONResponse(
+            status_code=422,
+            content=error_response(
+                ErrorCodes.VALIDATION_ERROR,
+                message,
+                request_id=_request_id(request),
+                data={"validation_errors": errors},
+            ).model_dump(mode="json"),
+        )
+
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError):
         return JSONResponse(
@@ -26,6 +51,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 exc.code,
                 str(exc),
                 request_id=_request_id(request),
+                data=exc.details,
             ).model_dump(mode="json"),
         )
 
@@ -52,14 +78,11 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
-        return JSONResponse(
-            status_code=422,
-            content=error_response(
-                ErrorCodes.VALIDATION_ERROR,
-                str(exc.errors()),
-                request_id=_request_id(request),
-            ).model_dump(mode="json"),
-        )
+        return _validation_response(request, exc)
+
+    @app.exception_handler(ValidationError)
+    async def pydantic_validation_error_handler(request: Request, exc: ValidationError):
+        return _validation_response(request, exc)
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):
