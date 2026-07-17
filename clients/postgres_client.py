@@ -11,9 +11,10 @@ True admin bypass requires connecting as crm_admin with BYPASSRLS.
 
 import logging
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
-from psycopg import sql
+from psycopg import Connection, sql
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -46,6 +47,10 @@ class PostgresClient:
 
     def __init__(self, database_url: str):
         self._database_url = database_url
+        self._transaction_connection: ContextVar[Connection | None] = ContextVar(
+            f"postgres_transaction_connection_{id(self)}",
+            default=None,
+        )
         self._ensure_connection_pool()
 
     def _ensure_connection_pool(self) -> None:
@@ -63,28 +68,53 @@ class PostgresClient:
     @contextmanager
     def get_connection(self):
         """Get connection with RLS context from contextvar."""
+        active_connection = self._transaction_connection.get()
+        if active_connection is not None:
+            yield active_connection
+            return
+
         if self._database_url not in self._connection_pools:
             self._ensure_connection_pool()
 
         pool = self._connection_pools[self._database_url]
 
         with pool.connection() as conn:
-            workspace_id = _current_workspace_id.get()
-
-            with conn.cursor() as cur:
-                if workspace_id is not None:
-                    # SET doesn't support parameter placeholders, use sql.Literal for safe value injection
-                    cur.execute(
-                        sql.SQL("SET app.current_workspace_id = {}").format(
-                            sql.Literal(str(workspace_id))
-                        )
-                    )
-                else:
-                    # Set to empty string to clear context
-                    # RLS policies convert an empty setting to NULL, so no tenant rows match.
-                    cur.execute("SET app.current_workspace_id = ''")
-
+            self._apply_workspace_context(conn)
             yield conn
+
+    def _apply_workspace_context(self, conn: Connection) -> None:
+        """Apply the current RLS workspace to one checked-out connection."""
+        workspace_id = _current_workspace_id.get()
+        with conn.cursor() as cur:
+            if workspace_id is not None:
+                cur.execute(
+                    sql.SQL("SET app.current_workspace_id = {}").format(
+                        sql.Literal(str(workspace_id))
+                    )
+                )
+            else:
+                cur.execute("SET app.current_workspace_id = ''")
+
+    @contextmanager
+    def transaction(self):
+        """Run all client calls in this context on one atomic connection."""
+        active_connection = self._transaction_connection.get()
+        if active_connection is not None:
+            with active_connection.transaction():
+                yield
+            return
+
+        if self._database_url not in self._connection_pools:
+            self._ensure_connection_pool()
+        pool = self._connection_pools[self._database_url]
+        with pool.connection() as conn:
+            token = self._transaction_connection.set(conn)
+            try:
+                with conn.transaction():
+                    self._apply_workspace_context(conn)
+                    yield
+            finally:
+                self._transaction_connection.reset(token)
 
     def _convert_params(
         self, params: tuple | dict | None
@@ -112,13 +142,15 @@ class PostgresClient:
         self, query: str, params: tuple | dict | None = None
     ) -> list[dict[str, Any]]:
         """Execute query, return list of row dicts. Empty list if no results."""
+        in_transaction = self._transaction_connection.get() is not None
         params = self._convert_params(params)
         with self.get_connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(query, params)
                 if cur.description:
                     return [dict(row) for row in cur.fetchall()]
-                conn.commit()
+                if not in_transaction:
+                    conn.commit()
                 return []
 
     def execute_single(
@@ -143,12 +175,14 @@ class PostgresClient:
         self, query: str, params: tuple | dict | None = None
     ) -> list[dict[str, Any]]:
         """Execute INSERT/UPDATE with RETURNING, return results."""
+        in_transaction = self._transaction_connection.get() is not None
         params = self._convert_params(params)
         with self.get_connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(query, params)
                 results = [dict(row) for row in cur.fetchall()]
-                conn.commit()
+                if not in_transaction:
+                    conn.commit()
                 return results
 
     def health_check(self) -> bool:
