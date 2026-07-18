@@ -17,6 +17,7 @@ from core.models import (
     ScheduledMessageCreate,
     AttributeCreate,
     WorkspaceSettingsUpdate,
+    SquareImportBatchRequest,
 )
 
 
@@ -40,6 +41,7 @@ def create_actions_router(services: dict) -> APIRouter:
         "message": MessageHandler(services["message"]),
         "address": AddressHandler(services["address"]),
         "workspace_settings": WorkspaceSettingsHandler(services["workspace_settings"]),
+        "square_import": SquareImportHandler(services["square_import"]),
     }
 
     @router.post("/actions")
@@ -67,7 +69,22 @@ def create_actions_router(services: dict) -> APIRouter:
     return router
 
 
+
+class SquareImportHandler:
+    """Apply trusted Square history chunks from CRM Mira."""
+
+    ALLOWED_ACTIONS = {"apply_batch"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_apply_batch(self, data: dict):
+        result = self.service.apply_batch(SquareImportBatchRequest(**data))
+        return result.model_dump(mode="json")
+
+
 class WorkspaceSettingsHandler:
+
     """Update the current workspace's operational defaults."""
 
     ALLOWED_ACTIONS = {"update"}

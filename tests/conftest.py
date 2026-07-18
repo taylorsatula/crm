@@ -1,6 +1,7 @@
 """Shared fixtures for the workspace-scoped CRM test suite."""
 
 import hashlib
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
@@ -100,6 +101,11 @@ def db(db_url):
                         _apply_rls(cur)
                         cur.execute(query, params)
                         return [dict(row) for row in cur.fetchall()]
+
+                @contextmanager
+                def transaction(self):
+                    with conn.transaction():
+                        yield
 
             yield TestDb()
     pool.close()
@@ -256,10 +262,17 @@ def workspace_settings_service(db):
 
 
 @pytest.fixture
+def square_import_service(db, audit):
+    from core.services.square_import_service import SquareImportService
+
+    return SquareImportService(db, audit)
+
+
+@pytest.fixture
 def services(
     customer_service, ticket_service, catalog_service, line_item_service,
     invoice_service, note_service, attribute_service, message_service, address_service,
-    workspace_settings_service,
+    workspace_settings_service, square_import_service,
 ):
     return {
         "customer": customer_service,
@@ -272,4 +285,5 @@ def services(
         "message": message_service,
         "address": address_service,
         "workspace_settings": workspace_settings_service,
+        "square_import": square_import_service,
     }

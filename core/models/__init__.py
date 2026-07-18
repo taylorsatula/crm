@@ -5,6 +5,12 @@ from core.models.address import Address, AddressCreate, AddressUpdate
 from core.models.service import Service, ServiceCreate, ServiceUpdate, PricingType
 from core.models.ticket import Ticket, TicketCreate, TicketUpdate, TicketStatus, ConfirmationStatus
 from core.models.line_item import LineItem, LineItemCreate, LineItemUpdate
+from core.models.square_import import (
+    SquareImportBatchRequest,
+    SquareImportBatchResult,
+    SquareSale,
+    SquareSaleLine,
+)
 from core.models.invoice import Invoice, InvoiceCreate, InvoiceStatus
 from core.models.note import Note, NoteCreate
 from core.models.attribute import Attribute, AttributeCreate, ExtractedAttributes
@@ -23,6 +29,7 @@ __all__ = [
     "Ticket", "TicketCreate", "TicketUpdate", "TicketStatus", "ConfirmationStatus",
     # LineItem
     "LineItem", "LineItemCreate", "LineItemUpdate",
+    "SquareImportBatchRequest", "SquareImportBatchResult", "SquareSale", "SquareSaleLine",
     # Invoice
     "Invoice", "InvoiceCreate", "InvoiceStatus",
     # Note

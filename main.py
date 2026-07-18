@@ -34,6 +34,7 @@ from core.services.line_item_service import LineItemService
 from core.services.message_service import MessageService
 from core.services.note_service import NoteService
 from core.services.ticket_service import TicketService
+from core.services.square_import_service import SquareImportService
 from core.services.workspace_settings_service import WorkspaceSettingsService
 from core.handlers.ticket_message_handler import (
     handle_ticket_completed_messages,
@@ -79,7 +80,7 @@ class _ContainerProxy:
 def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
     names = (
         "customer", "ticket", "catalog", "line_item", "invoice", "note",
-        "attribute", "message", "address", "workspace_settings",
+        "attribute", "message", "address", "workspace_settings", "square_import",
     )
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.services[key])
@@ -146,6 +147,7 @@ def build_app_container() -> AppContainer:
         "message": MessageService(postgres, audit),
         "address": AddressService(postgres, audit),
         "workspace_settings": WorkspaceSettingsService(postgres),
+        "square_import": SquareImportService(postgres, audit),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
     clients = {"database": postgres, "vault": vault, "llm": llm, "email": email_client}
