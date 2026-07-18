@@ -144,6 +144,22 @@ class TestCustomerActions:
         assert data["email"] == "alice@test.com"
         assert "id" in data
 
+    def test_invalid_customer_field_returns_structured_validation_details(
+        self, client, as_test_workspace
+    ):
+        response = client.post("/api/actions", json={
+            "domain": "customer",
+            "action": "create",
+            "data": {"first_name": "Jeff", "email": ""},
+        })
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["error"]["code"] == "VALIDATION_ERROR"
+        assert body["data"]["validation_errors"][0]["field"] == "email"
+        assert body["data"]["validation_errors"][0]["type"] == "value_error"
+        assert "email" in body["data"]["validation_errors"][0]["message"].lower()
+
     def test_update_customer(self, client, sample_customer):
         response = client.post("/api/actions", json={
             "domain": "customer",
