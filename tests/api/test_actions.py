@@ -227,6 +227,45 @@ class TestTicketActions:
         assert data["customer_id"] == str(sample_customer.id)
         assert data["status"] == "scheduled"
 
+    def test_unavailable_schedule_returns_booking_constraints(
+        self,
+        client,
+        db,
+        as_test_workspace,
+        test_workspace_id,
+        sample_customer,
+        sample_address,
+    ):
+        db.execute(
+            """
+            UPDATE workspace_settings
+            SET workday_start = '08:00',
+                workday_end = '17:00',
+                working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
+                travel_buffer_minutes = 30
+            WHERE workspace_id = %s
+            """,
+            (test_workspace_id,),
+        )
+        sunday = datetime(2030, 1, 6, 10, 0, tzinfo=ZoneInfo("America/Chicago"))
+        response = client.post("/api/actions", json={
+            "domain": "ticket",
+            "action": "create",
+            "data": {
+                "customer_id": str(sample_customer.id),
+                "address_id": str(sample_address.id),
+                "scheduled_at": sunday.isoformat(),
+            },
+        })
+
+        assert response.status_code == 409
+        body = response.json()
+        assert body["error"]["code"] == "TICKET_SCHEDULE_UNAVAILABLE"
+        assert body["data"]["reason"] == "non_working_day"
+        assert body["data"]["timezone"] == "America/Chicago"
+        assert body["data"]["working_days"] == ["mon", "tue", "wed", "thu", "fri"]
+        assert body["data"]["travel_buffer_minutes"] == 30
+
     def test_clock_in(self, client, sample_ticket):
         response = client.post("/api/actions", json={
             "domain": "ticket",

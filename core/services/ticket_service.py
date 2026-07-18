@@ -20,6 +20,8 @@ from core.exceptions import (
     TicketNotClockableError,
     TicketNotCloseableError,
     InvalidStatusTransitionError,
+    TicketScheduleConflictError,
+    TicketScheduleUnavailableError,
 )
 from core.models import Ticket, TicketCreate, TicketUpdate, TicketStatus, ConfirmationStatus
 from core.services.workspace_settings_service import WorkspaceSettingsService
@@ -61,23 +63,44 @@ class TicketService:
 
         workspace_id = get_current_workspace_id()
         settings = WorkspaceSettingsService(self.postgres).get()
-        local_start = scheduled_at.astimezone(ZoneInfo(get_current_workspace_timezone()))
+        timezone_name = get_current_workspace_timezone()
+        local_start = scheduled_at.astimezone(ZoneInfo(timezone_name))
         weekday = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[local_start.weekday()]
+        local_end = local_start + timedelta(minutes=duration_minutes)
         buffered_end = local_start + timedelta(
             minutes=duration_minutes + settings.travel_buffer_minutes
         )
+        schedule_details: dict[str, object] = {
+            "timezone": timezone_name,
+            "working_days": list(settings.working_days),
+            "workday_start": settings.workday_start.isoformat(),
+            "workday_end": settings.workday_end.isoformat(),
+            "travel_buffer_minutes": settings.travel_buffer_minutes,
+            "requested_start": local_start.isoformat(),
+            "requested_end": local_end.isoformat(),
+            "requested_buffered_end": buffered_end.isoformat(),
+            "duration_minutes": duration_minutes,
+        }
 
         if weekday not in settings.working_days:
-            raise ValueError(f"Appointments cannot be scheduled on {weekday}")
+            raise TicketScheduleUnavailableError(
+                f"Appointments cannot be scheduled on {weekday}; configured working days are "
+                f"{', '.join(settings.working_days)}",
+                details={**schedule_details, "reason": "non_working_day"},
+            )
         if (
             local_start.time() < settings.workday_start
             or buffered_end.date() != local_start.date()
             or buffered_end.time() > settings.workday_end
         ):
-            raise ValueError("Appointment and travel buffer must fit inside the configured workday")
+            raise TicketScheduleUnavailableError(
+                "Appointment and travel buffer must fit inside the configured "
+                f"{settings.workday_start.isoformat()}-{settings.workday_end.isoformat()} workday",
+                details={**schedule_details, "reason": "outside_workday"},
+            )
 
         query = """
-            SELECT id
+            SELECT id, scheduled_at, scheduled_duration_minutes
             FROM tickets
             WHERE workspace_id = %s
               AND deleted_at IS NULL
@@ -100,7 +123,29 @@ class TicketService:
         query += " LIMIT 1"
         conflict = self.postgres.execute_single(query, tuple(params))
         if conflict is not None:
-            raise ValueError("Appointment conflicts with an existing appointment or travel buffer")
+            conflict_start = conflict["scheduled_at"].astimezone(local_start.tzinfo)
+            conflict_duration = (
+                conflict["scheduled_duration_minutes"]
+                if conflict["scheduled_duration_minutes"] is not None
+                else settings.default_appointment_minutes
+            )
+            conflict_end = conflict_start + timedelta(minutes=conflict_duration)
+            conflict_buffered_end = conflict_end + timedelta(
+                minutes=settings.travel_buffer_minutes
+            )
+            raise TicketScheduleConflictError(
+                "Appointment conflicts with ticket "
+                f"{conflict['id']} from {conflict_start.isoformat()} through "
+                f"{conflict_buffered_end.isoformat()} including travel buffer",
+                details={
+                    **schedule_details,
+                    "reason": "schedule_conflict",
+                    "conflicting_ticket_id": str(conflict["id"]),
+                    "conflicting_start": conflict_start.isoformat(),
+                    "conflicting_end": conflict_end.isoformat(),
+                    "conflicting_buffered_end": conflict_buffered_end.isoformat(),
+                },
+            )
 
     def create(self, data: TicketCreate) -> Ticket:
         """
@@ -482,7 +527,7 @@ class TicketService:
         return {
             "ticket": ticket.model_dump(mode="json"),
             "customer_id": str(current.customer_id),
-            "address_id": str(current.address_id),
+            "address_id": str(current.address_id) if current.address_id else None,
         }
 
     def cancel(self, ticket_id: UUID) -> Ticket:

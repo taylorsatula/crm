@@ -3,6 +3,7 @@
 import pytest
 from uuid import uuid4
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from utils.timezone import now_utc
 
@@ -93,6 +94,66 @@ class TestTicketCreate:
         assert ticket.clock_in_at is None
         assert ticket.clock_out_at is None
         assert ticket.closed_at is None
+
+    def test_schedule_conflict_identifies_conflicting_interval(
+        self,
+        db,
+        as_test_workspace,
+        test_workspace_id,
+        ticket_service,
+        test_customer,
+        test_address,
+    ):
+        from core.exceptions import TicketScheduleConflictError
+        from core.models import TicketCreate
+
+        db.execute(
+            """
+            UPDATE workspace_settings
+            SET workday_start = '08:00',
+                workday_end = '17:00',
+                working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
+                travel_buffer_minutes = 30
+            WHERE workspace_id = %s
+            """,
+            (test_workspace_id,),
+        )
+        first_start = datetime(
+            2030, 1, 7, 9, 0, tzinfo=ZoneInfo("America/Chicago")
+        )
+        first = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=test_address.id,
+            scheduled_at=first_start,
+            scheduled_duration_minutes=60,
+        ))
+
+        with pytest.raises(TicketScheduleConflictError) as captured:
+            ticket_service.create(TicketCreate(
+                customer_id=test_customer.id,
+                address_id=test_address.id,
+                scheduled_at=first_start + timedelta(minutes=60),
+                scheduled_duration_minutes=60,
+            ))
+
+        error = captured.value
+        assert error.code == "TICKET_SCHEDULE_CONFLICT"
+        assert error.details == {
+            "timezone": "America/Chicago",
+            "working_days": ["mon", "tue", "wed", "thu", "fri"],
+            "workday_start": "08:00:00",
+            "workday_end": "17:00:00",
+            "travel_buffer_minutes": 30,
+            "requested_start": "2030-01-07T10:00:00-06:00",
+            "requested_end": "2030-01-07T11:00:00-06:00",
+            "requested_buffered_end": "2030-01-07T11:30:00-06:00",
+            "duration_minutes": 60,
+            "reason": "schedule_conflict",
+            "conflicting_ticket_id": str(first.id),
+            "conflicting_start": "2030-01-07T09:00:00-06:00",
+            "conflicting_end": "2030-01-07T10:00:00-06:00",
+            "conflicting_buffered_end": "2030-01-07T10:30:00-06:00",
+        }
 
 
 class TestTicketClockIn:

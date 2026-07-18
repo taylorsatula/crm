@@ -334,7 +334,7 @@ CREATE TABLE tickets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     customer_id UUID NOT NULL REFERENCES customers(id),
-    address_id UUID NOT NULL REFERENCES addresses(id),
+    address_id UUID REFERENCES addresses(id),
 
     -- Status: scheduled → in_progress → completed, or cancelled
     status TEXT NOT NULL DEFAULT 'scheduled',
@@ -359,6 +359,16 @@ CREATE TABLE tickets (
 
     -- Pricing
     is_price_estimated BOOLEAN NOT NULL DEFAULT false,  -- Shows "Estimated" in UI/emails, requires confirmation at close-out
+
+    -- Imported or non-residential service locations
+    location_type TEXT NOT NULL DEFAULT 'customer_address',
+    location_label TEXT,
+    location_address JSONB,
+
+    -- External source provenance
+    source_system TEXT,
+    source_record_id TEXT,
+    financial_match_method TEXT,
 
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

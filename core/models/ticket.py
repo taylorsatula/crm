@@ -29,7 +29,7 @@ class TicketCreate(BaseModel):
     """Data required to create a ticket."""
 
     customer_id: UUID
-    address_id: UUID
+    address_id: UUID | None = None
     scheduled_at: datetime
     scheduled_duration_minutes: int | None = Field(None, ge=1)
     is_price_estimated: bool = False
@@ -53,7 +53,7 @@ class Ticket(BaseModel):
     id: UUID
     workspace_id: UUID
     customer_id: UUID
-    address_id: UUID
+    address_id: UUID | None
     status: TicketStatus
     scheduled_at: datetime
     scheduled_duration_minutes: int | None
@@ -66,6 +66,12 @@ class Ticket(BaseModel):
     notes: str | None
     closed_at: datetime | None
     is_price_estimated: bool
+    location_type: str = "customer_address"
+    location_label: str | None = None
+    location_address: dict[str, str] | None = None
+    source_system: str | None = None
+    source_record_id: str | None = None
+    financial_match_method: str | None = None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None

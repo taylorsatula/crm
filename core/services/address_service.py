@@ -199,8 +199,9 @@ class AddressService:
         if current is None:
             return False
 
-        # Reject deletion when any ticket references this address. tickets.address_id
-        # is `UUID NOT NULL REFERENCES addresses(id)` with no ON DELETE clause, so an
+        # Reject deletion when any ticket references this address. Imported
+        # addressless tickets have NULL address_id and therefore do not block it.
+        # is `UUID REFERENCES addresses(id)` with no ON DELETE clause, so an
         # unguarded hard delete raises an opaque FK violation (INTERNAL_ERROR/500).
         # Count all tickets including soft-deleted ones; the FK constraint ignores
         # soft deletes, so a deleted ticket still blocks address deletion.
