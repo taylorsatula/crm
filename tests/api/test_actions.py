@@ -1,8 +1,9 @@
 """Tests for POST /api/actions unified mutation endpoint."""
 
 import pytest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from core.models import (
     CustomerCreate, TicketCreate, ServiceCreate, PricingType,
@@ -81,7 +82,13 @@ class TestActionsValidation:
         })
 
         assert response.status_code == 422
-        assert response.json()["meta"]["request_id"] == response.headers["X-Request-ID"]
+        body = response.json()
+        assert body["meta"]["request_id"] == response.headers["X-Request-ID"]
+        assert body["data"]["validation_errors"] == [{
+            "field": "body.domain",
+            "message": "Field required",
+            "type": "missing",
+        }]
 
     def test_missing_action_returns_422(self, client, as_test_workspace):
         response = client.post("/api/actions", json={
