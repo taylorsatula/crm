@@ -85,6 +85,19 @@ class SquareImportHandler:
         return result.model_dump(mode="json")
 
 
+class WorkflowHandler:
+    """Execute canonical multi-entity CRM workflows."""
+
+    ALLOWED_ACTIONS = {"book_new_customer_job"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_book_new_customer_job(self, data: dict):
+        booking = self.service.book_new_customer_job(NewCustomerJobBookingCreate(**data))
+        return booking.model_dump(mode="json")
+
+
 class WorkspaceSettingsHandler:
 
     """Update the current workspace's operational defaults."""

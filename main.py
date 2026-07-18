@@ -81,7 +81,8 @@ class _ContainerProxy:
 def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
     names = (
         "customer", "ticket", "catalog", "line_item", "invoice", "note",
-        "attribute", "message", "address", "workspace_settings", "square_import",
+        "attribute", "message", "address", "workspace_settings", "workflow",
+        "square_import",
     )
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.services[key])
