@@ -1,0 +1,9 @@
+FROM hashicorp/vault:1.18.3
+
+USER root
+RUN apk add --no-cache jq openssl postgresql16-client
+
+COPY deploy/docker/vault-bootstrap.sh /usr/local/bin/crm-vault-bootstrap
+RUN chmod 755 /usr/local/bin/crm-vault-bootstrap
+
+ENTRYPOINT ["/usr/local/bin/crm-vault-bootstrap"]

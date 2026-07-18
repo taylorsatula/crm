@@ -7,6 +7,8 @@ __pycache__/
 .env.*
 service-account-key.json
 *service-account*.json
+deploy/docker/secrets/*
+!deploy/docker/secrets/README.md
 
 # Scratch files
 junk_drawer/

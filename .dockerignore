@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.venv
+.pytest_cache
+__pycache__
+**/__pycache__
+*.py[cod]
+service-account-key.json
+*service-account*.json
+deploy/docker/secrets/
+tests/
+junk_drawer/

@@ -102,6 +102,9 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 - **Consistent Response Format**: All endpoints return `{success, data, error, meta}` structure
 - **Lightweight by Default**: Return minimal payload, use query params for expansion (e.g., `?include=line_items,customer`)
 - **Pagination Built-In**: All list endpoints support cursor-based pagination
+- **Customer Cursor**: Customer browse and search share `CustomerService.list_page()` and order by `(created_at DESC, id DESC)`; `/api/data?type=customers` returns `{customers, next_cursor}` and rejects offsets.
+- **Actionable Errors**: Pydantic validation failures return normalized field errors in response `data`; typed `DomainError.details` carries machine-readable recovery context for semantic failures.
+- **Canonical Booking Workflow**: `/api/actions` domain `workflow`, action `book_new_customer_job` creates one new customer, primary address, scheduled ticket, and one-or-more initial line items through `BookingWorkflowService`. Keep rules in the existing entity services; do not build a generic action-chaining DSL.
 
 ### Database Design
 - **PostgreSQL with RLS**: Row Level Security for automatic workspace isolation
@@ -110,6 +113,9 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. Use c
 - **Soft Deletes Where Appropriate**: For audit trail on business entities
 - **Workspace Settings Ownership**: `workspace_settings` is the RLS-protected one-to-one canonical record for scheduling and outbound-message defaults. Workspace timezone remains on `workspaces` and updates atomically with the settings record; MIRA owns tenant business identity.
 - **Scheduling Defaults**: `TicketService` enforces the current workspace workday, travel buffer, and booking conflicts, then publishes lifecycle events. `ticket_message_handler.py` turns CRM-owned confirmation, appointment-reminder, and service-reminder defaults into scheduled messages.
+- **Composite Transactions**: Wrap multi-service writes in `PostgresClient.transaction()`. All shared-client calls reuse one RLS-configured connection, audit rows participate in the same transaction, and any failure rolls the composite back.
+- **Square History Import**: `SquareImportService` is the only boundary allowed to create immutable historical tickets and Square sales without schedule validation or operational lifecycle events. `square_import_links` owns retry idempotency; inferred booking/order links must use the exact customer, service-variation, and local-day rule.
+- `deploy/migrations/20260717_square_history.sql` upgrades existing durable CRM databases; fresh installs receive the same tables and ticket columns from `schema.sql`.
 
 ### Frontend Design
 - **Vanilla HTML/CSS/JS**: No framework overhead, minimal bundle size
@@ -165,6 +171,9 @@ When modifying files, edit as if new code was always intended - never reference 
 - **Type check**: `mypy .`
 - **Format**: `black .`
 - **Database**: `psql -U postgres -h localhost -d crm`
+
+### Container Deployment
+- `Dockerfile` and `compose.yaml` define the CRM appliance: a private CRM API with its own PostgreSQL, Vault, AppRole bootstrap sidecar, and persistent `crm_*` volumes. Its Compose resources are `crm_*`-namespaced so it can be included beside `crm_mira`; `CRM_LIFECYCLE_SECRET_FILE` supplies their shared lifecycle credential. See `docs/DOCKER_DEPLOYMENT.md`; never remove its volumes as part of deployment or recovery.
 
 ### Test Execution Strategy
 - **During Development**: Run only the specific tests you're working on (`pytest tests/path/to/test_file.py::test_name`)

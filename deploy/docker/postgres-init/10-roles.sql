@@ -1,0 +1,3 @@
+CREATE ROLE crm_admin LOGIN CREATEROLE;
+CREATE ROLE crm_dbuser LOGIN;
+ALTER DATABASE crm OWNER TO crm_admin;

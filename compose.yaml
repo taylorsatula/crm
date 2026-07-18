@@ -1,0 +1,115 @@
+name: crm
+
+services:
+  crm:
+    image: crm:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      VAULT_ADDR: http://vault:8200
+      CRM_APPROLE_DIR: /vault/approle
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault_bootstrap:
+        condition: service_started
+    ports:
+      - "${CRM_HOST_BIND:-127.0.0.1}:${CRM_HOST_PORT:-8000}:8000"
+    volumes:
+      - crm_approle_data:/vault/approle:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/live', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+    secrets:
+      - source: crm_postgres_superuser_password
+        target: postgres_superuser_password
+    volumes:
+      - crm_pg_data:/var/lib/postgresql/data
+      - ./deploy/docker/postgres-init:/docker-entrypoint-initdb.d:ro
+      - ./schema.sql:/opt/crm/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  vault:
+    image: hashicorp/vault:1.18.3
+    cap_add:
+      - IPC_LOCK
+    command: vault server -config=/vault/config/vault.hcl
+    volumes:
+      - crm_vault_state:/vault/state
+      - ./deploy/docker/vault.hcl:/vault/config/vault.hcl:ro
+    healthcheck:
+      test: ["CMD-SHELL", "VAULT_ADDR=http://127.0.0.1:8200 vault status >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  vault_bootstrap:
+    image: crm-vault-bootstrap:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.vault-bootstrap
+    environment:
+      VAULT_ADDR: http://vault:8200
+      CRM_EMAIL_GATEWAY_URL: ${CRM_EMAIL_GATEWAY_URL:?Set CRM_EMAIL_GATEWAY_URL in .env}
+      CRM_EMAIL_HEALTH_URL: ${CRM_EMAIL_HEALTH_URL:?Set CRM_EMAIL_HEALTH_URL in .env}
+      CRM_LLM_BASE_URL: ${CRM_LLM_BASE_URL:?Set CRM_LLM_BASE_URL in .env}
+      CRM_LLM_MODEL: ${CRM_LLM_MODEL:?Set CRM_LLM_MODEL in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_started
+    secrets:
+      - source: crm_postgres_superuser_password
+        target: postgres_superuser_password
+      - source: crm_lifecycle_service_secret
+        target: crm_lifecycle_service_secret
+      - source: crm_email_gateway_api_key
+        target: email_gateway_api_key
+      - source: crm_email_gateway_hmac_secret
+        target: email_gateway_hmac_secret
+      - source: crm_llm_api_key
+        target: llm_api_key
+    volumes:
+      - crm_vault_state:/vault/state
+      - crm_approle_data:/vault/approle
+    restart: unless-stopped
+
+secrets:
+  crm_postgres_superuser_password:
+    file: ${CRM_SECRETS_DIR:-./deploy/docker/secrets}/postgres_superuser_password
+  crm_lifecycle_service_secret:
+    file: ${CRM_LIFECYCLE_SECRET_FILE:?Set CRM_LIFECYCLE_SECRET_FILE in .env}
+  crm_email_gateway_api_key:
+    file: ${CRM_SECRETS_DIR:-./deploy/docker/secrets}/email_gateway_api_key
+  crm_email_gateway_hmac_secret:
+    file: ${CRM_SECRETS_DIR:-./deploy/docker/secrets}/email_gateway_hmac_secret
+  crm_llm_api_key:
+    file: ${CRM_SECRETS_DIR:-./deploy/docker/secrets}/llm_api_key
+
+volumes:
+  crm_pg_data:
+    name: crm_postgres_data
+  crm_vault_state:
+    name: crm_vault_data
+  crm_approle_data:
+    name: crm_approle_data
