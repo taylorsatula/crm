@@ -151,7 +151,8 @@ class TestDataCustomers:
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
-        customers = body["data"]
+        assert body["data"]["next_cursor"] is None
+        customers = body["data"]["customers"]
         assert len(customers) == 1
         assert customers[0]["id"] == str(sample_customer.id)
         assert customers[0]["first_name"] == "Test"
@@ -185,7 +186,7 @@ class TestDataCustomers:
         })
 
         assert response.status_code == 200
-        results = response.json()["data"]
+        results = response.json()["data"]["customers"]
         assert len(results) == 1
         assert results[0]["first_name"] == "Test"
 
@@ -196,7 +197,7 @@ class TestDataCustomers:
         })
 
         assert response.status_code == 200
-        assert response.json()["data"] == []
+        assert response.json()["data"] == {"customers": [], "next_cursor": None}
 
     def test_list_customers_respects_limit(self, client, as_test_workspace, customer_service):
         for i in range(5):
@@ -208,7 +209,32 @@ class TestDataCustomers:
         })
 
         assert response.status_code == 200
-        assert len(response.json()["data"]) == 2
+        assert len(response.json()["data"]["customers"]) == 2
+        assert response.json()["data"]["next_cursor"] is not None
+
+    def test_customer_cursor_loads_the_next_page(self, client, as_test_workspace, customer_service):
+        for i in range(5):
+            customer_service.create(CustomerCreate(first_name=f"Cursor{i}"))
+
+        first = client.get("/api/data", params={"type": "customers", "limit": 2}).json()["data"]
+        second = client.get(
+            "/api/data",
+            params={"type": "customers", "limit": 2, "cursor": first["next_cursor"]},
+        ).json()["data"]
+
+        first_ids = {customer["id"] for customer in first["customers"]}
+        second_ids = {customer["id"] for customer in second["customers"]}
+        assert first_ids.isdisjoint(second_ids)
+
+    def test_customer_offset_is_rejected(self, client, as_test_workspace):
+        response = client.get("/api/data", params={"type": "customers", "offset": 1})
+        assert response.status_code == 400
+        assert "offset" in response.json()["error"]["message"]
+
+    def test_invalid_customer_cursor_is_rejected(self, client, as_test_workspace):
+        response = client.get("/api/data", params={"type": "customers", "cursor": "not-a-cursor"})
+        assert response.status_code == 400
+        assert "cursor" in response.json()["error"]["message"]
 
     def test_include_addresses(self, client, sample_customer, sample_address):
         response = client.get("/api/data", params={
@@ -740,7 +766,7 @@ class TestResponseFormat:
 
         body = response.json()
         assert body["success"] is True
-        assert body["data"] == []
+        assert body["data"] == {"customers": [], "next_cursor": None}
         assert body["error"] is None
         assert "timestamp" in body["meta"]
         assert "request_id" in body["meta"]

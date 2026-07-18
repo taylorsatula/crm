@@ -206,7 +206,7 @@ class TestCustomerList:
         customer_service.create(CustomerCreate(first_name="Ivan"))
         customer_service.create(CustomerCreate(first_name="Jane"))
 
-        result = customer_service.list_all()
+        result = customer_service.list_page(search=None, limit=50, cursor=None).customers
 
         assert len(result) >= 2
 
@@ -217,23 +217,23 @@ class TestCustomerList:
         for i in range(5):
             customer_service.create(CustomerCreate(first_name=f"User{i}"))
 
-        result = customer_service.list_all(limit=3)
+        result = customer_service.list_page(search=None, limit=3, cursor=None).customers
 
         assert len(result) == 3
 
-    def test_offset_pagination(self, db, as_test_workspace, customer_service):
-        """Offset skips records."""
+    def test_cursor_pagination(self, db, as_test_workspace, customer_service):
+        """The next cursor continues after the last returned customer."""
         from core.models import CustomerCreate
 
         for i in range(5):
             customer_service.create(CustomerCreate(first_name=f"User{i}"))
 
-        page1 = customer_service.list_all(limit=2, offset=0)
-        page2 = customer_service.list_all(limit=2, offset=2)
+        page1 = customer_service.list_page(search=None, limit=2, cursor=None)
+        page2 = customer_service.list_page(search=None, limit=2, cursor=page1.next_cursor)
 
-        # Different customers
-        page1_ids = {c.id for c in page1}
-        page2_ids = {c.id for c in page2}
+        assert page1.next_cursor is not None
+        page1_ids = {c.id for c in page1.customers}
+        page2_ids = {c.id for c in page2.customers}
         assert page1_ids.isdisjoint(page2_ids)
 
 
@@ -247,7 +247,7 @@ class TestCustomerSearch:
         customer_service.create(CustomerCreate(first_name="Katherine"))
         customer_service.create(CustomerCreate(first_name="Kevin"))
 
-        results = customer_service.search("Kath")
+        results = customer_service.list_page(search="Kath", limit=20, cursor=None).customers
 
         assert len(results) >= 1
         assert any(c.first_name == "Katherine" for c in results)
@@ -261,7 +261,7 @@ class TestCustomerSearch:
             email="larry@unique-domain.com"
         ))
 
-        results = customer_service.search("unique-domain")
+        results = customer_service.list_page(search="unique-domain", limit=20, cursor=None).customers
 
         assert len(results) >= 1
         assert any(c.email == "larry@unique-domain.com" for c in results)
@@ -272,7 +272,7 @@ class TestCustomerSearch:
 
         customer_service.create(CustomerCreate(first_name="Michelle"))
 
-        results = customer_service.search("michelle")
+        results = customer_service.list_page(search="michelle", limit=20, cursor=None).customers
 
         assert len(results) >= 1
 

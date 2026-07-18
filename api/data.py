@@ -15,6 +15,7 @@ VALID_TYPES = {
     "notes",
     "services",
     "tickets",
+    "square_sales",
     "workspace_settings",
 }
 
@@ -31,6 +32,7 @@ def create_data_router(services: dict) -> APIRouter:
     address_svc = services["address"]
     message_svc = services["message"]
     attribute_svc = services["attribute"]
+    square_import_svc = services["square_import"]
     workspace_settings_svc = services["workspace_settings"]
 
     # -------------------------------------------------------------------------
@@ -101,6 +103,7 @@ def create_data_router(services: dict) -> APIRouter:
             note_svc,
             message_svc,
             attribute_svc,
+            square_import_svc,
         )
         return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
 
@@ -119,7 +122,8 @@ def create_data_router(services: dict) -> APIRouter:
         include: str | None = Query(None),
         filter: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
-        offset: int = Query(0, ge=0),
+        cursor: str | None = Query(None),
+        offset: int | None = Query(None, ge=0),
     ):
         if type is None:
             raise ValueError("'type' query parameter is required")
@@ -138,9 +142,19 @@ def create_data_router(services: dict) -> APIRouter:
         if type == "customers":
             return _handle_customers(
                 customer_svc, address_svc, ticket_svc, invoice_svc, note_svc,
-                message_svc, attribute_svc, id, search, includes, limit, offset,
+                message_svc, attribute_svc, square_import_svc, id, search, includes,
+                limit, cursor, offset,
                 request.state.request_id,
             )
+
+        if type == "square_sales":
+            if not customer_id:
+                raise ValueError("'square_sales' type requires customer_id")
+            sales = square_import_svc.list_sales_for_customer(UUID(customer_id), limit)
+            return success_response(
+                [sale.model_dump(mode="json") for sale in sales],
+                request_id=request.state.request_id,
+            ).model_dump(mode="json")
 
         if type == "tickets":
             return _handle_tickets(
@@ -184,10 +198,12 @@ def _handle_customers(
     note_svc,
     message_svc,
     attribute_svc,
+    square_import_svc,
     id,
     search,
     includes,
     limit,
+    cursor,
     offset,
     request_id,
 ):
@@ -220,13 +236,16 @@ def _handle_customers(
         if "attributes" in includes:
             attributes = attribute_svc.list_for_customer(customer.id)
             data["attributes"] = [a.model_dump(mode="json") for a in attributes]
+        if "square_sales" in includes:
+            sales = square_import_svc.list_sales_for_customer(customer.id, limit)
+            data["square_sales"] = [sale.model_dump(mode="json") for sale in sales]
 
         return success_response(data, request_id=request_id).model_dump(mode="json")
 
-    if search:
-        customers = customer_svc.search(search, limit, offset)
-    else:
-        customers = customer_svc.list_all(limit, offset)
+    if offset is not None:
+        raise ValueError("Customer listing uses 'cursor'; 'offset' is not supported")
+    page = customer_svc.list_page(search=search, limit=limit, cursor=cursor)
+    customers = page.customers
 
     # Enrich with primary address (single batch query)
     if customers:
@@ -251,7 +270,10 @@ def _handle_customers(
             c.address = addr_map.get(str(c.id))
 
     return success_response(
-        [c.model_dump(mode="json") for c in customers],
+        {
+            "customers": [c.model_dump(mode="json") for c in customers],
+            "next_cursor": page.next_cursor,
+        },
         request_id=request_id,
     ).model_dump(mode="json")
 
@@ -498,9 +520,7 @@ def _ticket_packet(
     if customer is None:
         raise ValueError(f"Customer {ticket.customer_id} not found")
 
-    address = address_svc.get_by_id(ticket.address_id)
-    if address is None:
-        raise ValueError(f"Address {ticket.address_id} not found")
+    address = address_svc.get_by_id(ticket.address_id) if ticket.address_id else None
 
     items = line_item_svc.list_for_ticket(ticket.id)
     line_items = _line_item_payloads(items, catalog_svc)
@@ -519,7 +539,7 @@ def _ticket_packet(
     return {
         "ticket": ticket.model_dump(mode="json"),
         "customer": _customer_summary(customer),
-        "address": _address_summary(address),
+        "address": _address_summary(address) if address else None,
         "addresses": [_address_summary(a) for a in customer_addresses],
         "services": [s.model_dump(mode="json") for s in catalog_services if s.is_active],
         "line_items": line_items,
@@ -543,6 +563,7 @@ def _customer_dossier(
     note_svc,
     message_svc,
     attribute_svc,
+    square_import_svc,
 ) -> dict:
     addresses = address_svc.list_for_customer(customer.id)
     tickets = ticket_svc.list_for_customer(customer.id, 20)
@@ -550,6 +571,20 @@ def _customer_dossier(
     notes = note_svc.list_for_customer(customer.id, 20)
     messages = message_svc.list_for_customer(customer.id, 20)
     attributes = attribute_svc.list_for_customer(customer.id)
+    square_sales = square_import_svc.list_sales_for_customer(customer.id, 20)
+    sales_by_ticket = {
+        sale.matched_ticket_id: sale
+        for sale in square_sales
+        if sale.matched_ticket_id is not None
+    }
+    recent_tickets = []
+    for ticket in tickets:
+        ticket_data = ticket.model_dump(mode="json")
+        matched_sale = sales_by_ticket.get(ticket.id)
+        ticket_data["square_sale"] = (
+            matched_sale.model_dump(mode="json") if matched_sale else None
+        )
+        recent_tickets.append(ticket_data)
 
     open_invoices = [
         invoice
@@ -566,8 +601,9 @@ def _customer_dossier(
         "customer": _customer_summary(customer),
         "addresses": [_address_summary(address) for address in addresses],
         "attributes": [attribute.model_dump(mode="json") for attribute in attributes],
+        "square_sales": [sale.model_dump(mode="json") for sale in square_sales],
         "notes": [note.model_dump(mode="json") for note in notes],
-        "recent_tickets": [ticket.model_dump(mode="json") for ticket in tickets],
+        "recent_tickets": recent_tickets,
         "invoices": [invoice.model_dump(mode="json") for invoice in invoices],
         "open_invoices": [invoice.model_dump(mode="json") for invoice in open_invoices],
         "messages": [message.model_dump(mode="json") for message in messages],

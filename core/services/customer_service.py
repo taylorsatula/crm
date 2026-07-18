@@ -5,7 +5,12 @@ Handles customer lifecycle: create, read, update, soft delete.
 All operations are automatically scoped to the current user via RLS.
 """
 
+import base64
+import binascii
+import json
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from clients.postgres_client import PostgresClient
@@ -26,6 +31,12 @@ _UPDATABLE_COLUMNS = {
     "preferred_contact_method", "preferred_time_of_day",
     "reference_id", "referred_by", "stripe_customer_id"
 }
+
+
+@dataclass(frozen=True)
+class CustomerPage:
+    customers: list[Customer]
+    next_cursor: str | None
 
 
 class CustomerService:
@@ -213,62 +224,75 @@ class CustomerService:
 
         return True
 
-    def list_all(
+    def list_page(
         self,
-        limit: int = 50,
-        offset: int = 0
-    ) -> list[Customer]:
-        """
-        List customers with pagination.
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> CustomerPage:
+        """List one stable customer page ordered by ``(created_at, id)``."""
+        if limit < 1:
+            raise ValueError("Customer page limit must be positive")
 
-        Args:
-            limit: Maximum results (default 50)
-            offset: Offset for pagination
+        conditions = ["deleted_at IS NULL"]
+        params: list[object] = []
+        if search:
+            pattern = f"%{search}%"
+            conditions.append(
+                """(first_name ILIKE %s
+                 OR last_name ILIKE %s
+                 OR business_name ILIKE %s
+                 OR email ILIKE %s
+                 OR phone ILIKE %s)"""
+            )
+            params.extend([pattern] * 5)
 
-        Returns:
-            List of customers, ordered by created_at DESC
-        """
+        if cursor is not None:
+            created_at, customer_id = _decode_customer_cursor(cursor)
+            conditions.append("(created_at, id) < (%s, %s)")
+            params.extend((created_at, customer_id))
+
+        params.append(limit + 1)
         rows = self.postgres.execute(
-            """
+            f"""
             SELECT * FROM customers
-            WHERE deleted_at IS NULL
-            ORDER BY created_at DESC
-            LIMIT %s OFFSET %s
+            WHERE {' AND '.join(conditions)}
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
             """,
-            (limit, offset)
+            tuple(params),
         )
-
-        return [Customer.model_validate(row) for row in rows]
-
-    def search(self, query: str, limit: int = 20, offset: int = 0) -> list[Customer]:
-        """
-        Search customers by name, email, or phone.
-
-        Uses ILIKE for case-insensitive partial matching.
-
-        Args:
-            query: Search string
-            limit: Maximum results
-            offset: Offset for pagination
-
-        Returns:
-            Matching customers
-        """
-        pattern = f"%{query}%"
-
-        rows = self.postgres.execute(
-            """
-            SELECT * FROM customers
-            WHERE deleted_at IS NULL
-              AND (first_name ILIKE %s
-               OR last_name ILIKE %s
-               OR business_name ILIKE %s
-               OR email ILIKE %s
-               OR phone ILIKE %s)
-            ORDER BY created_at DESC
-            LIMIT %s OFFSET %s
-            """,
-            (pattern, pattern, pattern, pattern, pattern, limit, offset)
+        customers = [Customer.model_validate(row) for row in rows]
+        has_more = len(customers) > limit
+        selected = customers[:limit]
+        next_cursor = (
+            _encode_customer_cursor(selected[-1].created_at, selected[-1].id)
+            if has_more
+            else None
         )
+        return CustomerPage(customers=selected, next_cursor=next_cursor)
 
-        return [Customer.model_validate(row) for row in rows]
+
+def _encode_customer_cursor(created_at: datetime, customer_id: UUID) -> str:
+    payload = json.dumps(
+        {"created_at": created_at.isoformat(), "id": str(customer_id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_customer_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
+        if not isinstance(payload, dict) or set(payload) != {"created_at", "id"}:
+            raise ValueError
+        if not isinstance(payload["created_at"], str) or not isinstance(payload["id"], str):
+            raise ValueError
+        created_at = datetime.fromisoformat(payload["created_at"])
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError
+        customer_id = UUID(payload["id"])
+    except (binascii.Error, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid customer cursor") from exc
+    return created_at, customer_id
