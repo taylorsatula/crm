@@ -47,7 +47,8 @@ class FakeContainer:
         self.event_bus = EventBus()
         self.services = {name: FakeService() for name in (
             "customer", "ticket", "catalog", "line_item", "invoice", "note",
-            "attribute", "message", "address", "workspace_settings", "square_import",
+            "attribute", "message", "address", "workspace_settings", "workflow",
+            "square_import",
         )}
         self.clients = {
             "database": self.database,

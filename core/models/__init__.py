@@ -17,6 +17,12 @@ from core.models.attribute import Attribute, AttributeCreate, ExtractedAttribute
 from core.models.scheduled_message import ScheduledMessage, ScheduledMessageCreate, MessageStatus, MessageType
 from core.models.lead import Lead, LeadCreate, LeadUpdate, LeadStatus, LeadSource, LeadUrgency
 from core.models.workspace_settings import WorkspaceSettings, WorkspaceSettingsUpdate
+from core.models.booking import (
+    BookingAddressCreate,
+    BookingTicketCreate,
+    NewCustomerJobBooking,
+    NewCustomerJobBookingCreate,
+)
 
 __all__ = [
     # Customer
@@ -42,4 +48,9 @@ __all__ = [
     "Lead", "LeadCreate", "LeadUpdate", "LeadStatus", "LeadSource", "LeadUrgency",
     # Workspace settings
     "WorkspaceSettings", "WorkspaceSettingsUpdate",
+    # Booking workflow
+    "BookingAddressCreate",
+    "BookingTicketCreate",
+    "NewCustomerJobBooking",
+    "NewCustomerJobBookingCreate",
 ]

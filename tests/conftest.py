@@ -262,6 +262,21 @@ def workspace_settings_service(db):
 
 
 @pytest.fixture
+def workflow_service(
+    db,
+    customer_service,
+    address_service,
+    ticket_service,
+    line_item_service,
+):
+    from core.services.booking_workflow_service import BookingWorkflowService
+
+    return BookingWorkflowService(
+        db, customer_service, address_service, ticket_service, line_item_service
+    )
+
+
+@pytest.fixture
 def square_import_service(db, audit):
     from core.services.square_import_service import SquareImportService
 
@@ -272,7 +287,7 @@ def square_import_service(db, audit):
 def services(
     customer_service, ticket_service, catalog_service, line_item_service,
     invoice_service, note_service, attribute_service, message_service, address_service,
-    workspace_settings_service, square_import_service,
+    workspace_settings_service, workflow_service, square_import_service,
 ):
     return {
         "customer": customer_service,
@@ -286,4 +301,5 @@ def services(
         "address": address_service,
         "workspace_settings": workspace_settings_service,
         "square_import": square_import_service,
+        "workflow": workflow_service,
     }

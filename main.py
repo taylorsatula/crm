@@ -27,6 +27,7 @@ from core.handlers.ticket_cancellation_handler import handle_ticket_cancelled
 from core.handlers.ticket_completion_handler import handle_ticket_completed
 from core.services.address_service import AddressService
 from core.services.attribute_service import AttributeService
+from core.services.booking_workflow_service import BookingWorkflowService
 from core.services.catalog_service import CatalogService
 from core.services.customer_service import CustomerService
 from core.services.invoice_service import InvoiceService
@@ -136,18 +137,29 @@ def build_app_container() -> AppContainer:
     llm = LLMClient(**vault.get_llm_config())
     audit = AuditLogger(postgres)
     event_bus = EventBus()
+    customer_service = CustomerService(postgres, audit, event_bus)
+    ticket_service = TicketService(postgres, audit, event_bus)
+    line_item_service = LineItemService(postgres, audit)
+    address_service = AddressService(postgres, audit)
     services = {
-        "customer": CustomerService(postgres, audit, event_bus),
-        "ticket": TicketService(postgres, audit, event_bus),
+        "customer": customer_service,
+        "ticket": ticket_service,
         "catalog": CatalogService(postgres, audit),
-        "line_item": LineItemService(postgres, audit),
+        "line_item": line_item_service,
         "invoice": InvoiceService(postgres, audit, event_bus),
         "note": NoteService(postgres, audit, event_bus),
         "attribute": AttributeService(postgres, audit),
         "message": MessageService(postgres, audit),
-        "address": AddressService(postgres, audit),
+        "address": address_service,
         "workspace_settings": WorkspaceSettingsService(postgres),
         "square_import": SquareImportService(postgres, audit),
+        "workflow": BookingWorkflowService(
+            postgres,
+            customer_service,
+            address_service,
+            ticket_service,
+            line_item_service,
+        ),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
     clients = {"database": postgres, "vault": vault, "llm": llm, "email": email_client}

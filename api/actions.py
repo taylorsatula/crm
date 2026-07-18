@@ -18,6 +18,7 @@ from core.models import (
     AttributeCreate,
     WorkspaceSettingsUpdate,
     SquareImportBatchRequest,
+    NewCustomerJobBookingCreate,
 )
 
 
@@ -42,6 +43,7 @@ def create_actions_router(services: dict) -> APIRouter:
         "address": AddressHandler(services["address"]),
         "workspace_settings": WorkspaceSettingsHandler(services["workspace_settings"]),
         "square_import": SquareImportHandler(services["square_import"]),
+        "workflow": WorkflowHandler(services["workflow"]),
     }
 
     @router.post("/actions")

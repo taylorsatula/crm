@@ -384,6 +384,51 @@ class TestTicketActions:
 
 
 # =============================================================================
+# WORKFLOW ACTIONS
+# =============================================================================
+
+
+class TestWorkflowActions:
+
+    def test_book_new_customer_job(self, client, sample_service):
+        response = client.post("/api/actions", json={
+            "domain": "workflow",
+            "action": "book_new_customer_job",
+            "data": {
+                "customer": {
+                    "first_name": "Taylor",
+                    "last_name": "Booking",
+                    "email": "taylor.booking@example.com",
+                },
+                "address": {
+                    "street": "123 Workflow Way",
+                    "city": "Austin",
+                    "state": "TX",
+                    "zip": "78701",
+                },
+                "ticket": {
+                    "scheduled_at": (now_utc() + timedelta(days=5)).isoformat(),
+                    "scheduled_duration_minutes": 120,
+                },
+                "line_items": [{
+                    "service_id": str(sample_service.id),
+                    "quantity": 1,
+                }],
+            },
+        })
+
+        assert response.status_code == 200
+        booking = response.json()["data"]
+        assert booking["customer"]["first_name"] == "Taylor"
+        assert booking["address"]["customer_id"] == booking["customer"]["id"]
+        assert booking["address"]["is_primary"] is True
+        assert booking["ticket"]["customer_id"] == booking["customer"]["id"]
+        assert booking["ticket"]["address_id"] == booking["address"]["id"]
+        assert booking["line_items"][0]["ticket_id"] == booking["ticket"]["id"]
+        assert booking["line_items"][0]["service_id"] == str(sample_service.id)
+
+
+# =============================================================================
 # INVOICE ACTIONS
 # =============================================================================
 
