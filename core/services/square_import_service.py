@@ -164,6 +164,21 @@ class SquareImportService:
         existing = self._target_for("service", data.square_id)
         if existing:
             return existing, False
+        # Square recreates a service as a new variation ID whenever its price
+        # changes. Collapse those recreations — and matches against manually
+        # entered services — onto one canonical service per normalized name.
+        named = self.postgres.execute_single(
+            """
+            SELECT id FROM services
+            WHERE workspace_id = %s AND lower(name) = lower(%s)
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (get_current_workspace_id(), data.name),
+        )
+        if named:
+            self._link("service", data.square_id, named["id"], import_run_id)
+            return named["id"], False
         service_id = uuid4()
         now = now_utc()
         pricing_type = "fixed" if data.price_cents is not None else "flexible"
@@ -236,7 +251,7 @@ class SquareImportService:
                 data.location_label,
                 Json(data.location_address) if data.location_address else None,
                 data.square_id,
-                "conservative_customer_service_day" if data.matched_square_order_id else None,
+                data.match_method if data.matched_square_order_id else None,
                 now,
                 now,
             ),
@@ -414,7 +429,7 @@ class SquareImportService:
                     quantity,
                     line.base_price_cents,
                     line.total_price_cents,
-                    "Square inferred financial match: customer, service, and local service day.",
+                    "Line imported from the Square order matched to this booking.",
                     now,
                     now,
                 ),

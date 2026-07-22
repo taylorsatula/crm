@@ -24,7 +24,7 @@ def test_rich_square_batch_preserves_price_and_line_items():
                 "total_cents": 40000,
                 "paid_cents": 40000,
                 "matched_square_booking_id": "booking-1",
-                "match_method": "conservative_customer_service_day",
+                "match_method": "customer_service_sequence",
                 "lines": [
                     {
                         "square_uid": "line-1",
@@ -71,6 +71,7 @@ class _ImportDb:
     def __init__(self):
         self.links = {}
         self.calls = []
+        self.services_by_name = {}
 
     @contextmanager
     def transaction(self):
@@ -80,12 +81,17 @@ class _ImportDb:
         if "FROM square_import_links" in query:
             target = self.links.get((params[0], params[1]))
             return {"target_id": target} if target else None
+        if "FROM services" in query:
+            service_id = self.services_by_name.get(params[1].lower())
+            return {"id": service_id} if service_id else None
         return None
 
     def execute(self, query, params=None):
         self.calls.append((query, params))
         if "INSERT INTO square_import_links" in query:
             self.links[(params[2], params[3])] = params[4]
+        if "INSERT INTO services" in query:
+            self.services_by_name[params[2].lower()] = params[0]
         return []
 
 
@@ -125,6 +131,149 @@ def test_import_batch_is_idempotent_by_square_source_id():
     assert second.existing_records == 2
 
 
+def test_recreated_price_variation_collapses_onto_existing_service():
+    database = _ImportDb()
+    service = SquareImportService(database, _Audit())
+    request = SquareImportBatchRequest(
+        import_run_id=UUID("00000000-0000-0000-0000-000000000123"),
+        services=[
+            {"square_id": "exterior-2024", "name": "Window Cleaning", "price_cents": 40000},
+            {"square_id": "exterior-2025", "name": "window cleaning", "price_cents": 45000},
+        ],
+    )
+
+    with workspace_context(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        "America/Detroit",
+    ):
+        result = service.apply_batch(request)
+
+    assert result.services_created == 1
+    assert result.existing_records == 1
+    assert (
+        database.links[("service", "exterior-2024")]
+        == database.links[("service", "exterior-2025")]
+    )
+
+
+def test_import_links_onto_manually_created_service_with_same_name():
+    manual_id = UUID("00000000-0000-0000-0000-000000000099")
+    database = _ImportDb()
+    database.services_by_name["window cleaning"] = manual_id
+    service = SquareImportService(database, _Audit())
+    request = SquareImportBatchRequest(
+        import_run_id=UUID("00000000-0000-0000-0000-000000000123"),
+        services=[
+            {"square_id": "exterior-2025", "name": "Window Cleaning", "price_cents": 45000}
+        ],
+    )
+
+    with workspace_context(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        "America/Detroit",
+    ):
+        result = service.apply_batch(request)
+
+    assert result.services_created == 0
+    assert database.links[("service", "exterior-2025")] == manual_id
+
+
+def test_distinct_service_names_stay_separate():
+    database = _ImportDb()
+    service = SquareImportService(database, _Audit())
+    request = SquareImportBatchRequest(
+        import_run_id=UUID("00000000-0000-0000-0000-000000000123"),
+        services=[
+            {"square_id": "gutter-1", "name": "Gutter Cleaning"},
+            {"square_id": "gutter-2", "name": "Gutter Clearing"},
+        ],
+    )
+
+    with workspace_context(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        "America/Detroit",
+    ):
+        result = service.apply_batch(request)
+
+    assert result.services_created == 2
+    assert (
+        database.links[("service", "gutter-1")]
+        != database.links[("service", "gutter-2")]
+    )
+
+
+def test_zero_duration_addon_segment_and_match_method_are_valid():
+    request = SquareImportBatchRequest(
+        import_run_id=UUID("00000000-0000-0000-0000-000000000123"),
+        bookings=[
+            {
+                "square_id": "booking-addon",
+                "square_customer_id": "customer-1",
+                "start_at": "2025-03-04T15:00:00Z",
+                "duration_minutes": 120,
+                "status": "completed",
+                "closed_at": "2025-03-04T17:00:00Z",
+                "location_type": "CUSTOMER_LOCATION",
+                "segments": [
+                    {
+                        "square_service_id": "screens",
+                        "name": "Screen Cleaning",
+                        "duration_minutes": 0,
+                    }
+                ],
+                "matched_square_order_id": "order-1",
+                "match_method": "customer_service_sequence",
+            }
+        ],
+    )
+
+    booking = request.bookings[0]
+    assert booking.segments[0].duration_minutes == 0
+    assert booking.match_method == "customer_service_sequence"
+
+
+def test_matched_booking_carries_match_method_onto_ticket():
+    database = _ImportDb()
+    database.links[("customer", "customer-1")] = UUID(
+        "00000000-0000-0000-0000-000000000002"
+    )
+    service = SquareImportService(database, _Audit())
+    request = SquareImportBatchRequest(
+        import_run_id=UUID("00000000-0000-0000-0000-000000000123"),
+        bookings=[
+            {
+                "square_id": "booking-1",
+                "square_customer_id": "customer-1",
+                "start_at": "2025-03-04T15:00:00Z",
+                "duration_minutes": 120,
+                "status": "completed",
+                "closed_at": "2025-03-04T17:00:00Z",
+                "location_type": "CUSTOMER_LOCATION",
+                "segments": [
+                    {
+                        "square_service_id": "exterior",
+                        "name": "Window Cleaning (Exterior)",
+                        "duration_minutes": 120,
+                    }
+                ],
+                "matched_square_order_id": "order-1",
+                "match_method": "customer_service_sequence",
+            }
+        ],
+    )
+
+    with workspace_context(
+        UUID("00000000-0000-0000-0000-000000000001"),
+        "America/Detroit",
+    ):
+        service.apply_batch(request)
+
+    insert = next(
+        call for call in database.calls if "INSERT INTO tickets" in call[0]
+    )
+    assert insert[1][13] == "customer_service_sequence"
+
+
 def test_matched_ticket_lines_use_actual_square_order_prices():
     database = _ImportDb()
     service_id = UUID("00000000-0000-0000-0000-000000000010")
@@ -144,7 +293,7 @@ def test_matched_ticket_lines_use_actual_square_order_prices():
                 "total_cents": 40000,
                 "paid_cents": 40000,
                 "matched_square_booking_id": "booking-1",
-                "match_method": "conservative_customer_service_day",
+                "match_method": "customer_service_sequence",
                 "lines": [
                     {
                         "square_uid": "line-1",
@@ -174,7 +323,7 @@ def test_matched_ticket_lines_use_actual_square_order_prices():
     assert params[4] == "Window Cleaning (Exterior)"
     assert params[6] == 40000
     assert params[7] == 40000
-    assert "Square inferred financial match" in params[8]
+    assert params[8] == "Line imported from the Square order matched to this booking."
 
 
 class _HistoryDb:
@@ -201,7 +350,7 @@ class _HistoryDb:
                     "matched_ticket_id": UUID(
                         "00000000-0000-0000-0000-000000000020"
                     ),
-                    "match_method": "conservative_customer_service_day",
+                    "match_method": "customer_service_sequence",
                     "created_at": now_utc(),
                 }
             ]

@@ -34,7 +34,9 @@ class SquareBookingSegmentImport(BaseModel):
 
     square_service_id: str = Field(..., min_length=1, max_length=192)
     name: str = Field(..., min_length=1, max_length=255)
-    duration_minutes: int = Field(..., ge=1)
+    # Zero is valid: Square records add-on services that extend the service
+    # list without extending the appointment as 0-minute segments.
+    duration_minutes: int = Field(..., ge=0)
 
 
 class SquareBookingImport(BaseModel):
@@ -52,6 +54,9 @@ class SquareBookingImport(BaseModel):
     location_address: dict[str, str] | None = None
     segments: list[SquareBookingSegmentImport] = Field(default_factory=list)
     matched_square_order_id: str | None = Field(None, max_length=192)
+    match_method: str | None = Field(
+        None, pattern="^(customer_service_sequence|manual_review)$"
+    )
 
 
 class SquareSaleLineImport(BaseModel):
@@ -86,7 +91,9 @@ class SquareSaleImport(BaseModel):
     refunded_cents: int = Field(0, ge=0)
     receipt_url: str | None = Field(None, max_length=2048)
     matched_square_booking_id: str | None = Field(None, max_length=192)
-    match_method: str | None = Field(None, pattern="^conservative_customer_service_day$")
+    match_method: str | None = Field(
+        None, pattern="^(customer_service_sequence|manual_review)$"
+    )
     lines: list[SquareSaleLineImport] = Field(default_factory=list)
 
 
