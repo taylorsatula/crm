@@ -66,7 +66,23 @@ class InvoiceService:
         ticket_id: UUID,
         tax_rate_bps: int = 0,
         notes: str | None = None,
-        due_at: datetime | None = None
+        due_at: datetime | None = None,
+    ) -> Invoice:
+        """Create an invoice while serializing against ticket closeout."""
+        with self.postgres.transaction():
+            return self._create_from_ticket(
+                ticket_id=ticket_id,
+                tax_rate_bps=tax_rate_bps,
+                notes=notes,
+                due_at=due_at,
+            )
+
+    def _create_from_ticket(
+        self,
+        ticket_id: UUID,
+        tax_rate_bps: int = 0,
+        notes: str | None = None,
+        due_at: datetime | None = None,
     ) -> Invoice:
         """
         Create an invoice from a ticket's line items.
@@ -87,13 +103,26 @@ class InvoiceService:
 
         # Get ticket and customer
         ticket = self.postgres.execute_single(
-            "SELECT customer_id FROM tickets WHERE id = %s",
+            "SELECT customer_id FROM tickets WHERE id = %s FOR UPDATE",
             (ticket_id,)
         )
         if ticket is None:
             raise NotFoundError(f"Ticket {ticket_id} not found")
 
         customer_id = ticket["customer_id"]
+
+        closeout = self.postgres.execute_single(
+            """
+            SELECT invoice_ready
+            FROM ticket_closeouts
+            WHERE ticket_id = %s
+            """,
+            (ticket_id,),
+        )
+        if closeout is not None and not closeout["invoice_ready"]:
+            raise ValueError(
+                f"Ticket {ticket_id} has unresolved billing escalation; invoice creation is blocked"
+            )
 
         # Sum line items
         result = self.postgres.execute_single(

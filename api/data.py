@@ -33,6 +33,7 @@ def create_data_router(services: dict) -> APIRouter:
     message_svc = services["message"]
     attribute_svc = services["attribute"]
     square_import_svc = services["square_import"]
+    closeout_svc = services["closeout"]
     workspace_settings_svc = services["workspace_settings"]
 
     # -------------------------------------------------------------------------
@@ -66,6 +67,8 @@ def create_data_router(services: dict) -> APIRouter:
                 note_svc,
                 message_svc,
                 invoice_svc,
+                attribute_svc,
+                closeout_svc,
             )
             for ticket in tickets
         ]
@@ -86,6 +89,8 @@ def create_data_router(services: dict) -> APIRouter:
             note_svc,
             message_svc,
             invoice_svc,
+            attribute_svc,
+            closeout_svc,
         )
         return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
 
@@ -104,6 +109,7 @@ def create_data_router(services: dict) -> APIRouter:
             message_svc,
             attribute_svc,
             square_import_svc,
+            closeout_svc,
         )
         return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
 
@@ -159,7 +165,7 @@ def create_data_router(services: dict) -> APIRouter:
         if type == "tickets":
             return _handle_tickets(
                 ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc,
-                note_svc, message_svc, invoice_svc, id, customer_id, filter, includes, limit,
+                note_svc, message_svc, invoice_svc, attribute_svc, closeout_svc, id, customer_id, filter, includes, limit,
                 request.state.request_id,
             )
 
@@ -280,7 +286,7 @@ def _handle_customers(
 
 def _handle_tickets(
     ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc, note_svc,
-    message_svc, invoice_svc, id, customer_id, filter, includes, limit, request_id
+    message_svc, invoice_svc, attribute_svc, closeout_svc, id, customer_id, filter, includes, limit, request_id
 ):
     if id:
         ticket = ticket_svc.get_by_id(UUID(id))
@@ -329,6 +335,8 @@ def _handle_tickets(
                 note_svc,
                 message_svc,
                 invoice_svc,
+                attribute_svc,
+                closeout_svc,
             )
             for ticket in tickets
         ],
@@ -515,6 +523,8 @@ def _ticket_packet(
     note_svc,
     message_svc,
     invoice_svc,
+    attribute_svc,
+    closeout_svc,
 ) -> dict:
     customer = customer_svc.get_by_id(ticket.customer_id)
     if customer is None:
@@ -528,6 +538,7 @@ def _ticket_packet(
     customer_addresses = address_svc.list_for_customer(customer.id)
     catalog_services = catalog_svc.list_all()
     messages = message_svc.list_pending_for_ticket(ticket.id)
+    attributes = attribute_svc.list_for_customer(customer.id)
     invoices = [
         invoice
         for invoice in invoice_svc.list_for_customer(ticket.customer_id)
@@ -535,6 +546,10 @@ def _ticket_packet(
     ]
 
     total_price_cents = sum(item["total_price_cents"] or 0 for item in line_items)
+    closeout = closeout_svc.get_for_ticket(ticket.id)
+    profile_updates = closeout_svc.list_profile_updates_for_customer(customer.id, limit=50)
+    service_plans = closeout_svc.list_service_plans_for_customer(customer.id, limit=20)
+    follow_up_actions = closeout_svc.list_follow_up_actions_for_customer(customer.id, limit=50)
 
     return {
         "ticket": ticket.model_dump(mode="json"),
@@ -547,11 +562,16 @@ def _ticket_packet(
         "total_price_cents": total_price_cents,
         "job_notes": ticket.notes,
         "notes": [note.model_dump(mode="json") for note in notes],
+        "attributes": [attribute.model_dump(mode="json") for attribute in attributes],
         "pending_messages": [message.model_dump(mode="json") for message in messages],
         "pending_message_count": len(messages),
         "invoices": [invoice.model_dump(mode="json") for invoice in invoices],
         "invoice_summary": invoices[0].model_dump(mode="json") if invoices else None,
         "clock_state": _ticket_clock_state(ticket),
+        "closeout": closeout.model_dump(mode="json") if closeout else None,
+        "profile_updates": [update.model_dump(mode="json") for update in profile_updates],
+        "future_service_plans": [plan.model_dump(mode="json") for plan in service_plans],
+        "follow_up_actions": [action.model_dump(mode="json") for action in follow_up_actions],
     }
 
 
@@ -564,6 +584,7 @@ def _customer_dossier(
     message_svc,
     attribute_svc,
     square_import_svc,
+    closeout_svc,
 ) -> dict:
     addresses = address_svc.list_for_customer(customer.id)
     tickets = ticket_svc.list_for_customer(customer.id, 20)
@@ -572,6 +593,9 @@ def _customer_dossier(
     messages = message_svc.list_for_customer(customer.id, 20)
     attributes = attribute_svc.list_for_customer(customer.id)
     square_sales = square_import_svc.list_sales_for_customer(customer.id, 20)
+    profile_updates = closeout_svc.list_profile_updates_for_customer(customer.id, 100)
+    service_plans = closeout_svc.list_service_plans_for_customer(customer.id, 100)
+    follow_up_actions = closeout_svc.list_follow_up_actions_for_customer(customer.id, 100)
     sales_by_ticket = {
         sale.matched_ticket_id: sale
         for sale in square_sales
@@ -608,4 +632,7 @@ def _customer_dossier(
         "open_invoices": [invoice.model_dump(mode="json") for invoice in open_invoices],
         "messages": [message.model_dump(mode="json") for message in messages],
         "pending_messages": [message.model_dump(mode="json") for message in pending_messages],
+        "profile_updates": [update.model_dump(mode="json") for update in profile_updates],
+        "future_service_plans": [plan.model_dump(mode="json") for plan in service_plans],
+        "follow_up_actions": [action.model_dump(mode="json") for action in follow_up_actions],
     }

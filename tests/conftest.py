@@ -255,6 +255,19 @@ def address_service(db, audit):
 
 
 @pytest.fixture
+def closeout_service(db, audit, ticket_service, line_item_service, message_service):
+    from core.services.ticket_closeout_service import TicketCloseoutService
+
+    return TicketCloseoutService(
+        db,
+        audit,
+        ticket_service,
+        line_item_service,
+        message_service,
+    )
+
+
+@pytest.fixture
 def workspace_settings_service(db):
     from core.services.workspace_settings_service import WorkspaceSettingsService
 
@@ -287,7 +300,7 @@ def square_import_service(db, audit):
 def services(
     customer_service, ticket_service, catalog_service, line_item_service,
     invoice_service, note_service, attribute_service, message_service, address_service,
-    workspace_settings_service, workflow_service, square_import_service,
+    closeout_service, workspace_settings_service, workflow_service, square_import_service,
 ):
     return {
         "customer": customer_service,
@@ -299,6 +312,7 @@ def services(
         "attribute": attribute_service,
         "message": message_service,
         "address": address_service,
+        "closeout": closeout_service,
         "workspace_settings": workspace_settings_service,
         "square_import": square_import_service,
         "workflow": workflow_service,

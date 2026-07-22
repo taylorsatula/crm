@@ -227,7 +227,7 @@ class TestTicketActions:
         assert data["customer_id"] == str(sample_customer.id)
         assert data["status"] == "scheduled"
 
-    def test_unavailable_schedule_returns_booking_constraints(
+    def test_outside_schedule_blocked_without_override(
         self,
         client,
         db,
@@ -262,9 +262,42 @@ class TestTicketActions:
         body = response.json()
         assert body["error"]["code"] == "TICKET_SCHEDULE_UNAVAILABLE"
         assert body["data"]["reason"] == "non_working_day"
-        assert body["data"]["timezone"] == "America/Chicago"
-        assert body["data"]["working_days"] == ["mon", "tue", "wed", "thu", "fri"]
-        assert body["data"]["travel_buffer_minutes"] == 30
+
+    def test_outside_schedule_allowed_with_override(
+        self,
+        client,
+        db,
+        as_test_workspace,
+        test_workspace_id,
+        sample_customer,
+        sample_address,
+    ):
+        db.execute(
+            """
+            UPDATE workspace_settings
+            SET workday_start = '08:00',
+                workday_end = '17:00',
+                working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
+                travel_buffer_minutes = 30
+            WHERE workspace_id = %s
+            """,
+            (test_workspace_id,),
+        )
+        sunday = datetime(2030, 1, 6, 10, 0, tzinfo=ZoneInfo("America/Chicago"))
+        response = client.post("/api/actions", json={
+            "domain": "ticket",
+            "action": "create",
+            "data": {
+                "customer_id": str(sample_customer.id),
+                "address_id": str(sample_address.id),
+                "scheduled_at": sunday.isoformat(),
+                "override_schedule_validation": True,
+            },
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "scheduled"
 
     def test_clock_in(self, client, sample_ticket):
         response = client.post("/api/actions", json={
@@ -311,29 +344,78 @@ class TestTicketActions:
         assert response.status_code == 400
         assert "not clocked in" in response.json()["error"]["message"]
 
-    def test_close(self, client, as_test_workspace, ticket_service, sample_ticket):
-        ticket_service.clock_in(sample_ticket.id)
-        ticket_service.clock_out(sample_ticket.id)
-
+    def test_close_route_is_rejected_without_structured_closeout(self, client, sample_ticket):
         response = client.post("/api/actions", json={
             "domain": "ticket",
             "action": "close",
             "data": {"id": str(sample_ticket.id)},
         })
 
-        assert response.status_code == 200
-        assert response.json()["data"]["status"] == "completed"
-        assert response.json()["data"]["closed_at"] is not None
+        assert response.status_code == 400
+        assert "not allowed" in response.json()["error"]["message"]
 
-    def test_close_already_closed_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
-        ticket_service.clock_in(sample_ticket.id)
-        ticket_service.clock_out(sample_ticket.id)
-        ticket_service.close(sample_ticket.id)
+    def test_structured_closeout(self, client, line_item_service, sample_ticket, sample_service):
+        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
+        response = client.post("/api/actions", json={
+            "domain": "ticket",
+            "action": "closeout",
+            "data": {
+                "ticket_id": str(sample_ticket.id),
+                "actual_duration_minutes": 90,
+                "work_reconciliation": {
+                    "quoted_scope_status": "completed",
+                    "result_status": "achieved",
+                    "deviations": [],
+                },
+                "customer_capture": {
+                    "customer_response": "unknown",
+                    "profile_updates": [],
+                },
+                "next_service": {"disposition": "not_applicable"},
+                "follow_up_actions": [],
+            },
+        })
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["ticket"]["status"] == "completed"
+        assert data["ticket"]["actual_duration_minutes"] == 90
+        assert data["closeout"]["invoice_ready"] is True
+
+    def test_structured_closeout_already_closed_returns_400(
+        self,
+        client,
+        line_item_service,
+        sample_ticket,
+        sample_service,
+    ):
+        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
+        payload = {
+            "ticket_id": str(sample_ticket.id),
+            "actual_duration_minutes": 90,
+            "work_reconciliation": {
+                "quoted_scope_status": "completed",
+                "result_status": "achieved",
+                "deviations": [],
+            },
+            "customer_capture": {
+                "customer_response": "unknown",
+                "profile_updates": [],
+            },
+            "next_service": {"disposition": "not_applicable"},
+            "follow_up_actions": [],
+        }
+        first = client.post("/api/actions", json={
+            "domain": "ticket",
+            "action": "closeout",
+            "data": payload,
+        })
+        assert first.status_code == 200
 
         response = client.post("/api/actions", json={
             "domain": "ticket",
-            "action": "close",
-            "data": {"id": str(sample_ticket.id)},
+            "action": "closeout",
+            "data": payload,
         })
 
         assert response.status_code == 400
@@ -458,6 +540,60 @@ class TestInvoiceActions:
 
         assert response.status_code == 400
         assert "no line items" in response.json()["error"]["message"]
+
+    def test_resolve_billing_hold_releases_reconciled_total(
+        self,
+        client,
+        line_item_service,
+        sample_ticket,
+        sample_service,
+    ):
+        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
+        closeout = client.post("/api/actions", json={
+            "domain": "ticket",
+            "action": "closeout",
+            "data": {
+                "ticket_id": str(sample_ticket.id),
+                "actual_duration_minutes": 90,
+                "work_reconciliation": {
+                    "quoted_scope_status": "completed",
+                    "result_status": "achieved",
+                    "deviations": [{
+                        "deviation_type": "billing_uncertainty",
+                        "affected_item": "the final price",
+                        "description": "The final charge requires office confirmation.",
+                        "escalation": {
+                            "category": "billing_uncertainty",
+                            "disposition": "follow_up_required",
+                            "action": {
+                                "action_type": "create_quote",
+                                "responsible_party": "business",
+                                "description": "Confirm the final charge with the customer.",
+                            },
+                        },
+                    }],
+                },
+                "customer_capture": {"customer_response": "unknown", "profile_updates": []},
+                "next_service": {"disposition": "not_applicable"},
+                "follow_up_actions": [],
+            },
+        })
+        assert closeout.status_code == 200
+        closeout_data = closeout.json()["data"]["closeout"]
+        assert closeout_data["invoice_ready"] is False
+
+        resolution = client.post("/api/actions", json={
+            "domain": "invoice",
+            "action": "resolve_billing_hold",
+            "data": {
+                "ticket_id": str(sample_ticket.id),
+                "confirmed_total_cents": closeout_data["final_subtotal_cents"],
+                "resolution_note": "Customer approved the reconciled total by phone.",
+            },
+        })
+
+        assert resolution.status_code == 200
+        assert resolution.json()["data"]["invoice_ready"] is True
 
     def test_send_invoice(self, client, as_test_workspace, invoice_service, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))

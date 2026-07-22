@@ -526,6 +526,7 @@ class TestControlSurfaceReadShapes:
         sample_ticket,
         sample_line_item,
         sample_customer,
+        sample_attribute,
         note_service,
         message_service,
         invoice_service,
@@ -551,6 +552,7 @@ class TestControlSurfaceReadShapes:
         assert packet["customer"]["display_name"] == "Test Customer"
         assert packet["address"]["one_line"] == "123 Main St, Austin, TX, 78701"
         assert packet["line_items"][0]["id"] == str(sample_line_item.id)
+        assert packet["attributes"][0]["id"] == str(sample_attribute.id)
         assert packet["notes"][0]["id"] == str(note.id)
         assert packet["pending_messages"][0]["id"] == str(message.id)
         assert packet["invoice_summary"]["id"] == str(invoice.id)

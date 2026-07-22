@@ -48,7 +48,7 @@ class FakeContainer:
         self.services = {name: FakeService() for name in (
             "customer", "ticket", "catalog", "line_item", "invoice", "note",
             "attribute", "message", "address", "workspace_settings", "workflow",
-            "square_import",
+            "square_import", "closeout",
         )}
         self.clients = {
             "database": self.database,

@@ -9,6 +9,7 @@ from api.base import success_response
 from core.exceptions import NotFoundError
 from core.models import (
     CustomerCreate, CustomerUpdate,
+    BillingHoldResolution, CloseoutRequest,
     TicketCreate, TicketUpdate,
     ServiceCreate, ServiceUpdate,
     LineItemCreate, LineItemUpdate,
@@ -33,10 +34,10 @@ def create_actions_router(services: dict) -> APIRouter:
 
     handlers = {
         "customer": CustomerHandler(services["customer"]),
-        "ticket": TicketHandler(services["ticket"]),
+        "ticket": TicketHandler(services["ticket"], services["closeout"]),
         "catalog": CatalogHandler(services["catalog"]),
         "line_item": LineItemHandler(services["line_item"]),
-        "invoice": InvoiceHandler(services["invoice"]),
+        "invoice": InvoiceHandler(services["invoice"], services["closeout"]),
         "note": NoteHandler(services["note"]),
         "attribute": AttributeHandler(services["attribute"]),
         "message": MessageHandler(services["message"]),
@@ -141,10 +142,11 @@ class CustomerHandler:
 
 
 class TicketHandler:
-    ALLOWED_ACTIONS = {"create", "update", "delete", "clock_in", "clock_out", "close", "closeout", "cancel"}
+    ALLOWED_ACTIONS = {"create", "update", "delete", "clock_in", "clock_out", "closeout", "cancel"}
 
-    def __init__(self, service):
+    def __init__(self, service, closeout_service):
         self.service = service
+        self.closeout_service = closeout_service
 
     def _handle_create(self, data: dict):
         ticket = self.service.create(TicketCreate(**data))
@@ -170,26 +172,9 @@ class TicketHandler:
         ticket = self.service.clock_out(UUID(data["id"]))
         return ticket.model_dump(mode="json")
 
-    def _handle_close(self, data: dict):
-        ticket = self.service.close(UUID(data["id"]))
-        return ticket.model_dump(mode="json")
-
     def _handle_closeout(self, data: dict):
-        raw_duration = data.get("confirmed_duration_minutes")
-        if raw_duration is None:
-            raise ValueError("closeout requires confirmed_duration_minutes")
-        try:
-            confirmed_duration_minutes = int(raw_duration)
-        except (TypeError, ValueError):
-            raise ValueError("confirmed_duration_minutes must be an integer")
-        if confirmed_duration_minutes < 1:
-            raise ValueError("confirmed_duration_minutes must be a positive integer")
-        result = self.service.closeout(
-            ticket_id=UUID(data["id"]),
-            confirmed_duration_minutes=confirmed_duration_minutes,
-            final_note=data.get("final_note"),
-        )
-        return result
+        result = self.closeout_service.closeout(CloseoutRequest(**data))
+        return result.model_dump(mode="json")
 
     def _handle_cancel(self, data: dict):
         ticket = self.service.cancel(UUID(data["id"]))
@@ -244,10 +229,11 @@ class LineItemHandler:
 
 
 class InvoiceHandler:
-    ALLOWED_ACTIONS = {"create_from_ticket", "send", "record_payment", "void"}
+    ALLOWED_ACTIONS = {"create_from_ticket", "resolve_billing_hold", "send", "record_payment", "void"}
 
-    def __init__(self, service):
+    def __init__(self, service, closeout_service):
         self.service = service
+        self.closeout_service = closeout_service
 
     def _handle_create_from_ticket(self, data: dict):
         ticket_id = UUID(data["ticket_id"])
@@ -255,6 +241,10 @@ class InvoiceHandler:
         notes = data.get("notes")
         invoice = self.service.create_from_ticket(ticket_id, tax_rate_bps, notes)
         return invoice.model_dump(mode="json")
+
+    def _handle_resolve_billing_hold(self, data: dict):
+        closeout = self.closeout_service.resolve_billing_hold(BillingHoldResolution(**data))
+        return closeout.model_dump(mode="json")
 
     def _handle_send(self, data: dict):
         invoice = self.service.send(UUID(data["id"]))

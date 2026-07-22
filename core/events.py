@@ -45,10 +45,19 @@ class TicketEvent(CRMEvent):
 class TicketCreated(TicketEvent):
     """A new ticket was created in SCHEDULED status."""
     ticket: Any = None  # Ticket — using Any to avoid circular import
+    suppress_automatic_confirmation: bool = False
 
     @classmethod
-    def create(cls, ticket: Any) -> "TicketCreated":
-        return cls(ticket=ticket)
+    def create(
+        cls,
+        ticket: Any,
+        *,
+        suppress_automatic_confirmation: bool = False,
+    ) -> "TicketCreated":
+        return cls(
+            ticket=ticket,
+            suppress_automatic_confirmation=suppress_automatic_confirmation,
+        )
 
 
 @dataclass(frozen=True)
@@ -65,10 +74,19 @@ class TicketClockIn(TicketEvent):
 class TicketCompleted(TicketEvent):
     """Ticket was closed/completed."""
     ticket: Any = None
+    suppress_default_service_reminder: bool = False
 
     @classmethod
-    def create(cls, ticket: Any) -> "TicketCompleted":
-        return cls(ticket=ticket)
+    def create(
+        cls,
+        ticket: Any,
+        *,
+        suppress_default_service_reminder: bool = False,
+    ) -> "TicketCompleted":
+        return cls(
+            ticket=ticket,
+            suppress_default_service_reminder=suppress_default_service_reminder,
+        )
 
 
 @dataclass(frozen=True)

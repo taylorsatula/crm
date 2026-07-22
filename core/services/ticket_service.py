@@ -56,8 +56,16 @@ class TicketService:
         scheduled_at: datetime,
         duration_minutes: int,
         excluding_ticket_id: UUID | None = None,
+        override: bool = False,
     ) -> None:
-        """Enforce the active workspace's workday, buffer, and booking rules."""
+        """Enforce the active workspace's workday, buffer, and booking rules.
+
+        When *override* is True all checks are skipped — used after explicit
+        user confirmation via the skeletonkey gate at the tool layer.
+        """
+        if override:
+            return
+
         if scheduled_at.tzinfo is None:
             raise ValueError("scheduled_at must include a timezone offset")
 
@@ -147,7 +155,12 @@ class TicketService:
                 },
             )
 
-    def create(self, data: TicketCreate) -> Ticket:
+    def create(
+        self,
+        data: TicketCreate,
+        *,
+        suppress_automatic_confirmation: bool = False,
+    ) -> Ticket:
         """
         Create a new ticket.
 
@@ -169,6 +182,7 @@ class TicketService:
         self._validate_schedule(
             scheduled_at=data.scheduled_at,
             duration_minutes=duration_minutes,
+            override=getattr(data, "override_schedule_validation", False),
         )
 
         row = self.postgres.execute_returning(
@@ -208,7 +222,10 @@ class TicketService:
             }
         )
 
-        self.event_bus.publish(TicketCreated.create(ticket=ticket))
+        self.event_bus.publish(TicketCreated.create(
+            ticket=ticket,
+            suppress_automatic_confirmation=suppress_automatic_confirmation,
+        ))
 
         return ticket
 
@@ -280,6 +297,7 @@ class TicketService:
                     or WorkspaceSettingsService(self.postgres).get().default_appointment_minutes,
                 ),
                 excluding_ticket_id=ticket_id,
+                override=getattr(data, "override_schedule_validation", False),
             )
 
         set_parts = []
@@ -419,7 +437,13 @@ class TicketService:
 
         return updated
 
-    def close(self, ticket_id: UUID) -> Ticket:
+    def close(
+        self,
+        ticket_id: UUID,
+        *,
+        suppress_default_service_reminder: bool = False,
+        publish_event: bool = True,
+    ) -> Ticket:
         """
         Close ticket after completion.
 
@@ -462,73 +486,25 @@ class TicketService:
             }
         )
 
-        self.event_bus.publish(TicketCompleted.create(ticket=updated))
+        if publish_event:
+            self.publish_completed_event(
+                updated,
+                suppress_default_service_reminder=suppress_default_service_reminder,
+            )
 
         return updated
 
-    def closeout(
+    def publish_completed_event(
         self,
-        ticket_id: UUID,
-        confirmed_duration_minutes: int,
-        final_note: str | None = None,
-    ) -> dict:
-        """
-        Complete closeout flow: confirm duration, optionally add final note, then close.
-
-        Args:
-            ticket_id: Ticket UUID
-            confirmed_duration_minutes: Technician-confirmed actual duration
-            final_note: Optional final job note (persisted against the ticket)
-
-        Returns:
-            Dict with 'ticket' and 'customer_id' for frontend disposition step
-
-        Raises:
-            ValueError: If confirmed_duration_minutes is invalid or ticket cannot be closed
-        """
-        if not isinstance(confirmed_duration_minutes, int) or confirmed_duration_minutes < 1:
-            raise ValueError("closeout requires a positive confirmed_duration_minutes")
-
-        current = self.get_by_id(ticket_id)
-        if current is None:
-            raise NotFoundError(f"Ticket {ticket_id} not found")
-
-        if current.is_closed:
-            raise TicketNotCloseableError(f"Ticket {ticket_id} already closed")
-
-        # Update duration even if not clocked out
-        now = now_utc()
-        self.postgres.execute(
-            """
-            UPDATE tickets
-            SET actual_duration_minutes = %s, updated_at = %s
-            WHERE id = %s
-            """,
-            (confirmed_duration_minutes, now, ticket_id),
-        )
-
-        # Create final note on ticket if provided
-        if final_note:
-            from core.services.note_service import NoteService
-            from core.models.note import NoteCreate
-
-            note_svc = NoteService(self.postgres, self.audit, self.event_bus)
-            note_svc.create(
-                NoteCreate(
-                    content=final_note.strip(),
-                    customer_id=None,
-                    ticket_id=ticket_id,
-                )
-            )
-
-        # Close the ticket
-        ticket = self.close(ticket_id)
-
-        return {
-            "ticket": ticket.model_dump(mode="json"),
-            "customer_id": str(current.customer_id),
-            "address_id": str(current.address_id) if current.address_id else None,
-        }
+        ticket: Ticket,
+        *,
+        suppress_default_service_reminder: bool = False,
+    ) -> None:
+        """Publish a committed ticket-completion event."""
+        self.event_bus.publish(TicketCompleted.create(
+            ticket=ticket,
+            suppress_default_service_reminder=suppress_default_service_reminder,
+        ))
 
     def cancel(self, ticket_id: UUID) -> Ticket:
         """

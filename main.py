@@ -35,6 +35,7 @@ from core.services.line_item_service import LineItemService
 from core.services.message_service import MessageService
 from core.services.note_service import NoteService
 from core.services.ticket_service import TicketService
+from core.services.ticket_closeout_service import TicketCloseoutService
 from core.services.square_import_service import SquareImportService
 from core.services.workspace_settings_service import WorkspaceSettingsService
 from core.handlers.ticket_message_handler import (
@@ -82,7 +83,7 @@ def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
     names = (
         "customer", "ticket", "catalog", "line_item", "invoice", "note",
         "attribute", "message", "address", "workspace_settings", "workflow",
-        "square_import",
+        "square_import", "closeout",
     )
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.services[key])
@@ -142,6 +143,7 @@ def build_app_container() -> AppContainer:
     ticket_service = TicketService(postgres, audit, event_bus)
     line_item_service = LineItemService(postgres, audit)
     address_service = AddressService(postgres, audit)
+    message_service = MessageService(postgres, audit)
     services = {
         "customer": customer_service,
         "ticket": ticket_service,
@@ -150,7 +152,7 @@ def build_app_container() -> AppContainer:
         "invoice": InvoiceService(postgres, audit, event_bus),
         "note": NoteService(postgres, audit, event_bus),
         "attribute": AttributeService(postgres, audit),
-        "message": MessageService(postgres, audit),
+        "message": message_service,
         "address": address_service,
         "workspace_settings": WorkspaceSettingsService(postgres),
         "square_import": SquareImportService(postgres, audit),
@@ -160,6 +162,13 @@ def build_app_container() -> AppContainer:
             address_service,
             ticket_service,
             line_item_service,
+        ),
+        "closeout": TicketCloseoutService(
+            postgres,
+            audit,
+            ticket_service,
+            line_item_service,
+            message_service,
         ),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
