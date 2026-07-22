@@ -12,6 +12,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
       vault_bootstrap:
         condition: service_started
     ports:
@@ -45,6 +47,24 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+
+  migrations:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGDATABASE: crm
+      PGUSER: postgres
+    secrets:
+      - source: crm_postgres_superuser_password
+        target: postgres_superuser_password
+    volumes:
+      - ./deploy/docker/run-migrations.sh:/run-migrations.sh:ro
+      - ./deploy/migrations:/migrations:ro
+    entrypoint: ["/bin/sh", "/run-migrations.sh"]
+    restart: "no"
 
   vault:
     image: hashicorp/vault:1.18.3

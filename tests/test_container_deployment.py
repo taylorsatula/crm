@@ -19,8 +19,8 @@ def test_compose_keeps_crm_private_and_state_isolated() -> None:
     assert "crm_postgres_data" in compose
     assert "crm_vault_data" in compose
     assert "crm_approle_data" in compose
-    assert "postgres_data:/var/lib/postgresql/data" in compose
-    assert "vault_data:/vault/state" in compose
+    assert "crm_pg_data:/var/lib/postgresql/data" in compose
+    assert "crm_vault_state:/vault/state" in compose
     assert "VAULT_ADDR=http://127.0.0.1:8200 vault status" in compose
     assert "./schema.sql:/opt/crm/schema.sql:ro" in compose
     assert "\\i /opt/crm/schema.sql" in _read("deploy/docker/postgres-init/20-schema.sql")
@@ -29,6 +29,22 @@ def test_compose_keeps_crm_private_and_state_isolated() -> None:
     bootstrap_block = compose.split("  vault_bootstrap:", 1)[1].split("\nsecrets:", 1)[0]
     assert "approle_data:/vault/approle" in bootstrap_block
     assert "CRM_LIFECYCLE_SECRET_FILE" in compose
+
+
+def test_migrations_run_before_crm_and_reject_stale_base_schemas() -> None:
+    compose = _read("compose.yaml")
+    runner = _read("deploy/docker/run-migrations.sh")
+
+    assert "  migrations:" in compose
+    assert "./deploy/migrations:/migrations:ro" in compose
+    crm_block = compose.split("  crm:", 1)[1].split("  vault:", 1)[0]
+    assert "migrations:" in crm_block
+    assert "condition: service_completed_successfully" in crm_block
+    assert "postgres_superuser_password" in runner
+    assert "('workspaces')" in runner
+    assert "('ticket_closeouts')" in runner
+    assert "stale or incomplete" in runner
+    assert "partially present" in runner
 
 
 def test_vault_bootstrap_scopes_crm_secrets_and_preserves_partial_state() -> None:
@@ -50,6 +66,7 @@ def test_container_entrypoints_parse() -> None:
             "-n",
             "deploy/docker/entrypoint.sh",
             "deploy/docker/vault-bootstrap.sh",
+            "deploy/docker/run-migrations.sh",
         ],
         cwd=ROOT,
         check=False,
