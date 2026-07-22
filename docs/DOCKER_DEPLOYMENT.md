@@ -26,6 +26,16 @@ gateway, and the configured LLM provider. It remains unhealthy when placeholder
 gateway or LLM credentials are used; that is correct and does not mean the CRM
 process failed to start.
 
+## Schema upgrades
+
+Compose runs its one-shot `migrations` service before the CRM API starts. It
+records and applies the structured-closeout migration only on the current
+workspace-scoped base schema. A database using the pre-workspace `users` /
+`user_id` schema is incompatible with the current API and is intentionally
+rejected rather than partially migrated. It needs a separately designed,
+forward-only legacy-to-workspace migration with an explicit workspace/data
+mapping before any ordinary CRM migration can run.
+
 ## MIRA integration
 
 When MIRA and CRM are joined to one Docker network, MIRA must use
