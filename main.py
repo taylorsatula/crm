@@ -167,8 +167,6 @@ def build_app_container() -> AppContainer:
             postgres,
             audit,
             ticket_service,
-            line_item_service,
-            message_service,
         ),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)

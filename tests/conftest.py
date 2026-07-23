@@ -255,15 +255,13 @@ def address_service(db, audit):
 
 
 @pytest.fixture
-def closeout_service(db, audit, ticket_service, line_item_service, message_service):
+def closeout_service(db, audit, ticket_service):
     from core.services.ticket_closeout_service import TicketCloseoutService
 
     return TicketCloseoutService(
         db,
         audit,
         ticket_service,
-        line_item_service,
-        message_service,
     )
 
 

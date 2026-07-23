@@ -354,25 +354,19 @@ class TestTicketActions:
         assert response.status_code == 400
         assert "not allowed" in response.json()["error"]["message"]
 
-    def test_structured_closeout(self, client, line_item_service, sample_ticket, sample_service):
-        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
+    def test_structured_closeout(self, client, sample_ticket):
         response = client.post("/api/actions", json={
             "domain": "ticket",
             "action": "closeout",
             "data": {
                 "ticket_id": str(sample_ticket.id),
                 "actual_duration_minutes": 90,
-                "work_reconciliation": {
-                    "quoted_scope_status": "completed",
-                    "result_status": "achieved",
-                    "deviations": [],
-                },
+                "quoted_scope_status": "completed",
+                "result_status": "achieved",
                 "customer_capture": {
-                    "customer_response": "unknown",
-                    "profile_updates": [],
+                    "customer_response": "no_concern_stated",
                 },
                 "next_service": {"disposition": "not_applicable"},
-                "follow_up_actions": [],
             },
         })
 
@@ -380,30 +374,20 @@ class TestTicketActions:
         data = response.json()["data"]
         assert data["ticket"]["status"] == "completed"
         assert data["ticket"]["actual_duration_minutes"] == 90
-        assert data["closeout"]["invoice_ready"] is True
+        assert data["closeout"]["quoted_scope_status"] == "completed"
 
     def test_structured_closeout_already_closed_returns_400(
         self,
         client,
-        line_item_service,
         sample_ticket,
-        sample_service,
     ):
-        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
         payload = {
             "ticket_id": str(sample_ticket.id),
             "actual_duration_minutes": 90,
-            "work_reconciliation": {
-                "quoted_scope_status": "completed",
-                "result_status": "achieved",
-                "deviations": [],
-            },
-            "customer_capture": {
-                "customer_response": "unknown",
-                "profile_updates": [],
-            },
+            "quoted_scope_status": "completed",
+            "result_status": "achieved",
+            "customer_capture": {"customer_response": "unknown"},
             "next_service": {"disposition": "not_applicable"},
-            "follow_up_actions": [],
         }
         first = client.post("/api/actions", json={
             "domain": "ticket",

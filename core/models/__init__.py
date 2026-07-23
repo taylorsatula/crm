@@ -24,23 +24,10 @@ from core.models.booking import (
     NewCustomerJobBookingCreate,
 )
 from core.models.closeout import (
-    AppointmentContact,
-    BillingHoldResolution,
-    CloseoutProfileUpdate,
     CloseoutRequest,
-    CloseoutResult,
     CustomerCapture,
-    Escalation,
-    FollowUpAction,
-    FollowUpActionRecord,
-    FutureServicePlan,
     NextServiceDisposition,
-    NextServiceTiming,
-    PlannedService,
-    ProfileUpdate,
-    ScopeDeviation,
     TicketCloseout,
-    WorkReconciliation,
 )
 
 __all__ = [
@@ -73,8 +60,5 @@ __all__ = [
     "NewCustomerJobBooking",
     "NewCustomerJobBookingCreate",
     # Structured closeout
-    "BillingHoldResolution", "CloseoutProfileUpdate", "CloseoutRequest", "CloseoutResult", "CustomerCapture", "Escalation", "FollowUpAction",
-    "FollowUpActionRecord", "FutureServicePlan", "NextServiceDisposition",
-    "NextServiceTiming", "AppointmentContact", "PlannedService", "ProfileUpdate",
-    "ScopeDeviation", "TicketCloseout", "WorkReconciliation",
+    "CloseoutRequest", "CustomerCapture", "NextServiceDisposition", "TicketCloseout",
 ]

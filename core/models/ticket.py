@@ -34,7 +34,6 @@ class TicketCreate(BaseModel):
     scheduled_duration_minutes: int | None = Field(None, ge=1)
     is_price_estimated: bool = False
     notes: str | None = None
-    override_schedule_validation: bool = False
 
 
 class TicketUpdate(BaseModel):
@@ -46,7 +45,6 @@ class TicketUpdate(BaseModel):
     is_price_estimated: bool | None = None
     notes: str | None = None
     confirmation_status: ConfirmationStatus | None = None
-    override_schedule_validation: bool = False
 
 
 class Ticket(BaseModel):

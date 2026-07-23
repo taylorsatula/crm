@@ -26,10 +26,7 @@ def handle_ticket_created_messages(message_service, workspace_settings_service) 
     def handler(event: TicketCreated) -> None:
         ticket = event.ticket
         settings = workspace_settings_service.get()
-        if (
-            settings.appointment_confirmation_enabled
-            and not event.suppress_automatic_confirmation
-        ):
+        if settings.appointment_confirmation_enabled:
             message_service.schedule(
                 ScheduledMessageCreate(
                     customer_id=ticket.customer_id,
@@ -65,8 +62,6 @@ def handle_ticket_completed_messages(message_service, workspace_settings_service
     """Schedule configured service reminders after a completed ticket."""
 
     def handler(event: TicketCompleted) -> None:
-        if event.suppress_default_service_reminder:
-            return
         ticket = event.ticket
         settings = workspace_settings_service.get()
         months = {"six_months": 6, "one_year": 12}.get(settings.service_reminder_mode)

@@ -9,7 +9,7 @@ from api.base import success_response
 from core.exceptions import NotFoundError
 from core.models import (
     CustomerCreate, CustomerUpdate,
-    BillingHoldResolution, CloseoutRequest,
+    CloseoutRequest,
     TicketCreate, TicketUpdate,
     ServiceCreate, ServiceUpdate,
     LineItemCreate, LineItemUpdate,
@@ -37,7 +37,7 @@ def create_actions_router(services: dict) -> APIRouter:
         "ticket": TicketHandler(services["ticket"], services["closeout"]),
         "catalog": CatalogHandler(services["catalog"]),
         "line_item": LineItemHandler(services["line_item"]),
-        "invoice": InvoiceHandler(services["invoice"], services["closeout"]),
+        "invoice": InvoiceHandler(services["invoice"]),
         "note": NoteHandler(services["note"]),
         "attribute": AttributeHandler(services["attribute"]),
         "message": MessageHandler(services["message"]),
@@ -229,11 +229,10 @@ class LineItemHandler:
 
 
 class InvoiceHandler:
-    ALLOWED_ACTIONS = {"create_from_ticket", "resolve_billing_hold", "send", "record_payment", "void"}
+    ALLOWED_ACTIONS = {"create_from_ticket", "send", "record_payment", "void"}
 
-    def __init__(self, service, closeout_service):
+    def __init__(self, service):
         self.service = service
-        self.closeout_service = closeout_service
 
     def _handle_create_from_ticket(self, data: dict):
         ticket_id = UUID(data["ticket_id"])
@@ -241,10 +240,6 @@ class InvoiceHandler:
         notes = data.get("notes")
         invoice = self.service.create_from_ticket(ticket_id, tax_rate_bps, notes)
         return invoice.model_dump(mode="json")
-
-    def _handle_resolve_billing_hold(self, data: dict):
-        closeout = self.closeout_service.resolve_billing_hold(BillingHoldResolution(**data))
-        return closeout.model_dump(mode="json")
 
     def _handle_send(self, data: dict):
         invoice = self.service.send(UUID(data["id"]))

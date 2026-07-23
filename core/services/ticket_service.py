@@ -56,16 +56,8 @@ class TicketService:
         scheduled_at: datetime,
         duration_minutes: int,
         excluding_ticket_id: UUID | None = None,
-        override: bool = False,
     ) -> None:
-        """Enforce the active workspace's workday, buffer, and booking rules.
-
-        When *override* is True all checks are skipped — used after explicit
-        user confirmation via the skeletonkey gate at the tool layer.
-        """
-        if override:
-            return
-
+        """Enforce the active workspace's workday, buffer, and booking rules."""
         if scheduled_at.tzinfo is None:
             raise ValueError("scheduled_at must include a timezone offset")
 
@@ -155,12 +147,7 @@ class TicketService:
                 },
             )
 
-    def create(
-        self,
-        data: TicketCreate,
-        *,
-        suppress_automatic_confirmation: bool = False,
-    ) -> Ticket:
+    def create(self, data: TicketCreate) -> Ticket:
         """
         Create a new ticket.
 
@@ -182,7 +169,6 @@ class TicketService:
         self._validate_schedule(
             scheduled_at=data.scheduled_at,
             duration_minutes=duration_minutes,
-            override=getattr(data, "override_schedule_validation", False),
         )
 
         row = self.postgres.execute_returning(
@@ -222,10 +208,7 @@ class TicketService:
             }
         )
 
-        self.event_bus.publish(TicketCreated.create(
-            ticket=ticket,
-            suppress_automatic_confirmation=suppress_automatic_confirmation,
-        ))
+        self.event_bus.publish(TicketCreated.create(ticket=ticket))
 
         return ticket
 
@@ -297,7 +280,6 @@ class TicketService:
                     or WorkspaceSettingsService(self.postgres).get().default_appointment_minutes,
                 ),
                 excluding_ticket_id=ticket_id,
-                override=getattr(data, "override_schedule_validation", False),
             )
 
         set_parts = []
@@ -437,13 +419,7 @@ class TicketService:
 
         return updated
 
-    def close(
-        self,
-        ticket_id: UUID,
-        *,
-        suppress_default_service_reminder: bool = False,
-        publish_event: bool = True,
-    ) -> Ticket:
+    def close(self, ticket_id: UUID) -> Ticket:
         """
         Close ticket after completion.
 
@@ -486,25 +462,9 @@ class TicketService:
             }
         )
 
-        if publish_event:
-            self.publish_completed_event(
-                updated,
-                suppress_default_service_reminder=suppress_default_service_reminder,
-            )
+        self.event_bus.publish(TicketCompleted.create(ticket=updated))
 
         return updated
-
-    def publish_completed_event(
-        self,
-        ticket: Ticket,
-        *,
-        suppress_default_service_reminder: bool = False,
-    ) -> None:
-        """Publish a committed ticket-completion event."""
-        self.event_bus.publish(TicketCompleted.create(
-            ticket=ticket,
-            suppress_default_service_reminder=suppress_default_service_reminder,
-        ))
 
     def cancel(self, ticket_id: UUID) -> Ticket:
         """
