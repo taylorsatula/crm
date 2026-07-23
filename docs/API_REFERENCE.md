@@ -171,7 +171,7 @@ Unified mutation endpoint. Body structure:
 | `ticket` | `create`, `update`, `delete`, `clock_in`, `clock_out`, `closeout`, `cancel` |
 | `catalog` | `create`, `update`, `delete` |
 | `line_item` | `create`, `update`, `delete` |
-| `invoice` | `create_from_ticket`, `resolve_billing_hold`, `send`, `record_payment`, `void` |
+| `invoice` | `create_from_ticket`, `send`, `record_payment`, `void` |
 | `note` | `create`, `delete` |
 | `attribute` | `create`, `delete` |
 | `message` | `schedule`, `cancel` |
@@ -185,17 +185,15 @@ See the request models in `core/models/` and handler classes in `api/actions.py`
 ### Structured ticket closeout
 
 `ticket` / `closeout` is the only terminal completion action. It accepts the
-canonical `CloseoutRequest`: `ticket_id`, `actual_duration_minutes`, aggregate
-`work_reconciliation`, required `customer_capture`, `next_service`, concrete
-`follow_up_actions`, and optional residual `technician_summary`. The existing
-ticket line items are the quoted baseline. The command records only deviations,
-requires an escalation packet containing a disposition and owned action for
-damage, safety risk, customer concern/dispute, billing uncertainty, or required
-return work, blocks invoice creation while a billing-uncertainty escalation is
-not resolved, and releases that hold only through `invoice` / `resolve_billing_hold`
-with the existing closeout total and a resolution note, performs final quantity and
-price reconciliation transactionally,
-stores provenance-bearing profile facts, creates the requested exact booking or
-flexible plan, records owed actions, audits the aggregate, and then completes
-the ticket. `customer_response` includes `unknown`; empty deviation, profile,
-and action lists are valid when no content surfaced.
+canonical `CloseoutRequest`: `ticket_id`, `actual_duration_minutes`,
+`quoted_scope_status`, `result_status`, required `customer_capture`
+(`customer_response`, which includes `unknown`), `next_service` (`disposition`
+plus optional note), and optional residual `technician_summary`. The command
+records actual duration on the ticket, persists one closeout aggregate, audits
+it, and completes the ticket in a single transaction.
+
+Durable customer/property facts surfaced during the debrief are not part of
+this payload — they are written mid-debrief as customer-scoped notes and
+attributes via `note` / `attribute` actions, and every ticket packet
+(`GET /api/data/tickets/{id}/packet`, `GET /api/data/today`) resurfaces them as
+`customer_notes` alongside `recent_closeouts` and `attributes`.

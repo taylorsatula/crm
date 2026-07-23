@@ -34,6 +34,7 @@ def create_data_router(services: dict) -> APIRouter:
     attribute_svc = services["attribute"]
     square_import_svc = services["square_import"]
     workspace_settings_svc = services["workspace_settings"]
+    closeout_svc = services["closeout"]
 
     # -------------------------------------------------------------------------
     # Convenience routes (must be registered before the generic /data route)
@@ -67,6 +68,7 @@ def create_data_router(services: dict) -> APIRouter:
                 message_svc,
                 invoice_svc,
                 attribute_svc,
+                closeout_svc,
             )
             for ticket in tickets
         ]
@@ -88,6 +90,7 @@ def create_data_router(services: dict) -> APIRouter:
             message_svc,
             invoice_svc,
             attribute_svc,
+            closeout_svc,
         )
         return success_response(data, request_id=request.state.request_id).model_dump(mode="json")
 
@@ -332,6 +335,7 @@ def _handle_tickets(
                 message_svc,
                 invoice_svc,
                 attribute_svc,
+                closeout_svc,
             )
             for ticket in tickets
         ],
@@ -519,6 +523,7 @@ def _ticket_packet(
     message_svc,
     invoice_svc,
     attribute_svc,
+    closeout_svc,
 ) -> dict:
     customer = customer_svc.get_by_id(ticket.customer_id)
     if customer is None:
@@ -529,6 +534,8 @@ def _ticket_packet(
     items = line_item_svc.list_for_ticket(ticket.id)
     line_items = _line_item_payloads(items, catalog_svc)
     notes = note_svc.list_for_ticket(ticket.id)
+    customer_notes = note_svc.list_for_customer(customer.id, limit=20)
+    recent_closeouts = closeout_svc.list_for_customer(customer.id, limit=5)
     customer_addresses = address_svc.list_for_customer(customer.id)
     catalog_services = catalog_svc.list_all()
     messages = message_svc.list_pending_for_ticket(ticket.id)
@@ -552,6 +559,8 @@ def _ticket_packet(
         "total_price_cents": total_price_cents,
         "job_notes": ticket.notes,
         "notes": [note.model_dump(mode="json") for note in notes],
+        "customer_notes": [note.model_dump(mode="json") for note in customer_notes],
+        "recent_closeouts": [closeout.model_dump(mode="json") for closeout in recent_closeouts],
         "attributes": [attribute.model_dump(mode="json") for attribute in attributes],
         "pending_messages": [message.model_dump(mode="json") for message in messages],
         "pending_message_count": len(messages),

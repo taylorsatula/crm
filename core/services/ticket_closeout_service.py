@@ -55,6 +55,20 @@ class TicketCloseoutService:
         )
         return TicketCloseout.model_validate(row) if row is not None else None
 
+    def list_for_customer(self, customer_id: UUID, limit: int = 5) -> list[TicketCloseout]:
+        """Return a customer's most recent closeouts, newest first."""
+        rows = self.postgres.execute(
+            """
+            SELECT tc.* FROM ticket_closeouts tc
+            JOIN tickets t ON t.id = tc.ticket_id
+            WHERE t.customer_id = %s AND t.deleted_at IS NULL
+            ORDER BY tc.created_at DESC
+            LIMIT %s
+            """,
+            (customer_id, limit),
+        )
+        return [TicketCloseout.model_validate(row) for row in rows]
+
     # ------------------------------------------------------------- internals
 
     def _load_open_ticket(self, ticket_id: UUID) -> Ticket:

@@ -8,6 +8,7 @@ from core.models import (
     CustomerCreate, TicketCreate, ServiceCreate, PricingType,
     LineItemCreate, NoteCreate, AddressCreate,
     ScheduledMessageCreate, MessageType, AttributeCreate,
+    CloseoutRequest,
 )
 from utils.timezone import now_utc
 
@@ -556,6 +557,62 @@ class TestControlSurfaceReadShapes:
         assert packet["notes"][0]["id"] == str(note.id)
         assert packet["pending_messages"][0]["id"] == str(message.id)
         assert packet["invoice_summary"]["id"] == str(invoice.id)
+
+    def test_ticket_packet_surfaces_customer_lens(
+        self,
+        client,
+        as_test_workspace,
+        sample_ticket,
+        sample_customer,
+        note_service,
+        closeout_service,
+    ):
+        """Customer-bucket facts and prior closeouts ride every ticket packet."""
+        customer_note = note_service.create(NoteCreate(
+            customer_id=sample_customer.id,
+            content="Screens are sun-weathered - handle gently.",
+        ))
+        ticket_note = note_service.create(NoteCreate(
+            ticket_id=sample_ticket.id,
+            content="Heavy algae buildup today; one-time condition.",
+        ))
+        closeout_service.closeout(CloseoutRequest(
+            ticket_id=sample_ticket.id,
+            actual_duration_minutes=125,
+            quoted_scope_status="completed",
+            result_status="achieved",
+            customer_capture={"customer_response": "positive_feedback"},
+            next_service={"disposition": "book", "note": "same scope next year"},
+            technician_summary=None,
+        ))
+
+        response = client.get(f"/api/data/tickets/{sample_ticket.id}/packet")
+
+        assert response.status_code == 200
+        packet = response.json()["data"]
+        # State bucket: customer-scoped note surfaces on every future packet.
+        customer_note_ids = [note["id"] for note in packet["customer_notes"]]
+        assert str(customer_note.id) in customer_note_ids
+        # Event bucket: ticket-scoped note stays in notes, not customer_notes.
+        assert str(ticket_note.id) in [note["id"] for note in packet["notes"]]
+        assert str(ticket_note.id) not in customer_note_ids
+        # The lens: this ticket's closeout is visible to the next debrief.
+        assert packet["recent_closeouts"][0]["ticket_id"] == str(sample_ticket.id)
+        assert packet["recent_closeouts"][0]["actual_duration_minutes"] == 125
+
+    def test_ticket_packet_customer_lens_empty_for_new_customer(
+        self,
+        client,
+        as_test_workspace,
+        sample_ticket,
+    ):
+        """A customer with no history renders empty lens blocks, not errors."""
+        response = client.get(f"/api/data/tickets/{sample_ticket.id}/packet")
+
+        assert response.status_code == 200
+        packet = response.json()["data"]
+        assert packet["customer_notes"] == []
+        assert packet["recent_closeouts"] == []
 
     def test_customer_dossier_returns_knowledge_clusters(
         self,

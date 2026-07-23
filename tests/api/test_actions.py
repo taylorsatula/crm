@@ -525,60 +525,6 @@ class TestInvoiceActions:
         assert response.status_code == 400
         assert "no line items" in response.json()["error"]["message"]
 
-    def test_resolve_billing_hold_releases_reconciled_total(
-        self,
-        client,
-        line_item_service,
-        sample_ticket,
-        sample_service,
-    ):
-        line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
-        closeout = client.post("/api/actions", json={
-            "domain": "ticket",
-            "action": "closeout",
-            "data": {
-                "ticket_id": str(sample_ticket.id),
-                "actual_duration_minutes": 90,
-                "work_reconciliation": {
-                    "quoted_scope_status": "completed",
-                    "result_status": "achieved",
-                    "deviations": [{
-                        "deviation_type": "billing_uncertainty",
-                        "affected_item": "the final price",
-                        "description": "The final charge requires office confirmation.",
-                        "escalation": {
-                            "category": "billing_uncertainty",
-                            "disposition": "follow_up_required",
-                            "action": {
-                                "action_type": "create_quote",
-                                "responsible_party": "business",
-                                "description": "Confirm the final charge with the customer.",
-                            },
-                        },
-                    }],
-                },
-                "customer_capture": {"customer_response": "unknown", "profile_updates": []},
-                "next_service": {"disposition": "not_applicable"},
-                "follow_up_actions": [],
-            },
-        })
-        assert closeout.status_code == 200
-        closeout_data = closeout.json()["data"]["closeout"]
-        assert closeout_data["invoice_ready"] is False
-
-        resolution = client.post("/api/actions", json={
-            "domain": "invoice",
-            "action": "resolve_billing_hold",
-            "data": {
-                "ticket_id": str(sample_ticket.id),
-                "confirmed_total_cents": closeout_data["final_subtotal_cents"],
-                "resolution_note": "Customer approved the reconciled total by phone.",
-            },
-        })
-
-        assert resolution.status_code == 200
-        assert resolution.json()["data"]["invoice_ready"] is True
-
     def test_send_invoice(self, client, as_test_workspace, invoice_service, line_item_service, sample_ticket, sample_service):
         line_item_service.create(sample_ticket.id, LineItemCreate(service_id=sample_service.id))
         invoice = invoice_service.create_from_ticket(sample_ticket.id)
