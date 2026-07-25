@@ -305,11 +305,16 @@ class LeadService:
             params.append(status)
 
         if search:
-            pattern = f"%{search}%"
-            conditions.append(
-                "(name ILIKE %s OR email ILIKE %s OR phone ILIKE %s OR service_interest ILIKE %s)"
-            )
-            params.extend([pattern] * 4)
+            terms = search.split()
+            columns = "(name ILIKE %s OR email ILIKE %s OR phone ILIKE %s OR service_interest ILIKE %s)"
+            term_clauses = []
+            for term in terms:
+                if term:
+                    pattern = f"%{term}%"
+                    term_clauses.append(columns)
+                    params.extend([pattern] * 4)
+            if term_clauses:
+                conditions.append(f"({') AND ('.join(term_clauses)})")
 
         if cursor is not None:
             from core.services.customer_service import _decode_customer_cursor

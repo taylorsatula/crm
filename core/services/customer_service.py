@@ -237,15 +237,20 @@ class CustomerService:
         conditions = ["deleted_at IS NULL"]
         params: list[object] = []
         if search:
-            pattern = f"%{search}%"
-            conditions.append(
-                """(first_name ILIKE %s
-                 OR last_name ILIKE %s
-                 OR business_name ILIKE %s
-                 OR email ILIKE %s
-                 OR phone ILIKE %s)"""
-            )
-            params.extend([pattern] * 5)
+            terms = search.split()
+            columns = """(first_name ILIKE %s
+                        OR last_name ILIKE %s
+                        OR business_name ILIKE %s
+                        OR email ILIKE %s
+                        OR phone ILIKE %s)"""
+            term_clauses = []
+            for term in terms:
+                if term:
+                    pattern = f"%{term}%"
+                    term_clauses.append(columns)
+                    params.extend([pattern] * 5)
+            if term_clauses:
+                conditions.append(f"({') AND ('.join(term_clauses)})")
 
         if cursor is not None:
             created_at, customer_id = _decode_customer_cursor(cursor)
