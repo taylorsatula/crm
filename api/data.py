@@ -11,8 +11,10 @@ VALID_TYPES = {
     "attributes",
     "customers",
     "invoices",
+    "leads",
     "messages",
     "notes",
+    "quotes",
     "services",
     "tickets",
     "square_sales",
@@ -35,6 +37,8 @@ def create_data_router(services: dict) -> APIRouter:
     square_import_svc = services["square_import"]
     workspace_settings_svc = services["workspace_settings"]
     closeout_svc = services["closeout"]
+    lead_svc = services["lead"]
+    quote_svc = services["quote"]
 
     # -------------------------------------------------------------------------
     # Convenience routes (must be registered before the generic /data route)
@@ -190,6 +194,18 @@ def create_data_router(services: dict) -> APIRouter:
         if type == "attributes":
             return _handle_attributes(
                 attribute_svc, id, customer_id, request.state.request_id
+            )
+
+        if type == "leads":
+            return _handle_leads(
+                lead_svc, id, search, filter, limit, cursor,
+                request.state.request_id,
+            )
+
+        if type == "quotes":
+            return _handle_quotes(
+                quote_svc, id, search, customer_id, filter, limit, cursor,
+                request.state.request_id,
             )
 
     return router
@@ -624,3 +640,63 @@ def _customer_dossier(
         "messages": [message.model_dump(mode="json") for message in messages],
         "pending_messages": [message.model_dump(mode="json") for message in pending_messages],
     }
+
+
+def _handle_leads(lead_svc, id, search, filter, limit, cursor, request_id):
+    if id:
+        lead = lead_svc.get_by_id(UUID(id))
+        if lead is None:
+            raise ValueError(f"Lead {id} not found")
+        data = lead.model_dump(mode="json")
+        return success_response(data, request_id=request_id).model_dump(mode="json")
+
+    page = lead_svc.list_page(
+        status=filter,
+        search=search or None,
+        limit=limit,
+        cursor=cursor,
+    )
+    return success_response(
+        {
+            "leads": [l.model_dump(mode="json") for l in page.leads],
+            "next_cursor": page.next_cursor,
+        },
+        request_id=request_id,
+    ).model_dump(mode="json")
+
+
+def _handle_quotes(quote_svc, id, search, customer_id, filter, limit, cursor, request_id):
+    if id:
+        quote = quote_svc.get_by_id(UUID(id))
+        if quote is None:
+            raise ValueError(f"Quote {id} not found")
+        data = quote.model_dump(mode="json")
+        data["line_items"] = [
+            li.model_dump(mode="json")
+            for li in quote_svc.list_line_items(quote.id)
+        ]
+        return success_response(data, request_id=request_id).model_dump(mode="json")
+
+    cid = UUID(customer_id) if customer_id else None
+    page = quote_svc.list_page(
+        customer_id=cid,
+        status=filter,
+        limit=limit,
+        cursor=cursor,
+    )
+    # Enrich each quote with line items for the pipeline view
+    enriched = []
+    for q in page.quotes:
+        q_dict = q.model_dump(mode="json")
+        q_dict["line_items"] = [
+            li.model_dump(mode="json")
+            for li in quote_svc.list_line_items(q.id)
+        ]
+        enriched.append(q_dict)
+    return success_response(
+        {
+            "quotes": enriched,
+            "next_cursor": page.next_cursor,
+        },
+        request_id=request_id,
+    ).model_dump(mode="json")

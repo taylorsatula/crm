@@ -120,3 +120,17 @@ class AddressInUseError(DomainError):
 
     code = "ADDRESS_IN_USE"
     http_status = 409
+
+
+class QuoteNotFoundError(DomainError):
+    """A referenced quote does not exist."""
+
+    code = "QUOTE_NOT_FOUND"
+    http_status = 404
+
+
+class QuoteInvalidTransitionError(DomainError):
+    """A requested quote state transition is not allowed."""
+
+    code = "QUOTE_INVALID_TRANSITION"
+    http_status = 409

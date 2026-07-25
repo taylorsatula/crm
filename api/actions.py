@@ -20,6 +20,9 @@ from core.models import (
     WorkspaceSettingsUpdate,
     SquareImportBatchRequest,
     NewCustomerJobBookingCreate,
+    LeadCreate, LeadUpdate,
+    QuoteCreate, QuoteUpdate,
+    QuoteLineItemCreate, QuoteLineItemUpdate,
 )
 
 
@@ -45,6 +48,9 @@ def create_actions_router(services: dict) -> APIRouter:
         "workspace_settings": WorkspaceSettingsHandler(services["workspace_settings"]),
         "square_import": SquareImportHandler(services["square_import"]),
         "workflow": WorkflowHandler(services["workflow"]),
+        "lead": LeadHandler(services["lead"]),
+        "quote": QuoteHandler(services["quote"]),
+        "quote_line_item": QuoteLineItemHandler(services["quote"]),
     }
 
     @router.post("/actions")
@@ -326,3 +332,118 @@ class AddressHandler:
         if not deleted:
             raise NotFoundError(f"Address {address_id} not found")
         return {"deleted": True}
+
+
+class LeadHandler:
+    """Manage CRM leads across the sales pipeline."""
+
+    ALLOWED_ACTIONS = {"create", "update", "transition", "convert", "delete"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_create(self, data: dict):
+        lead = self.service.create(LeadCreate(**data))
+        return lead.model_dump(mode="json")
+
+    def _handle_update(self, data: dict):
+        lead_id = UUID(data.pop("id"))
+        lead = self.service.update(lead_id, LeadUpdate(**data))
+        return lead.model_dump(mode="json")
+
+    def _handle_transition(self, data: dict):
+        lead_id = UUID(data["id"])
+        target_status = data["status"]
+        lead = self.service.transition(lead_id, target_status)
+        return lead.model_dump(mode="json")
+
+    def _handle_convert(self, data: dict):
+        lead_id = UUID(data["lead_id"])
+        customer_id = UUID(data["customer_id"])
+        lead = self.service.convert_lead(lead_id, customer_id)
+        return lead.model_dump(mode="json")
+
+    def _handle_delete(self, data: dict):
+        lead_id = UUID(data["id"])
+        deleted = self.service.delete(lead_id)
+        if not deleted:
+            raise NotFoundError(f"Lead {lead_id} not found")
+        return {"deleted": True}
+
+
+class QuoteHandler:
+    """Manage CRM quotes and their lifecycle."""
+
+    ALLOWED_ACTIONS = {"create", "update", "send", "accept", "reject", "expire", "archive", "delete"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_create(self, data: dict):
+        quote = self.service.create(QuoteCreate(**data))
+        return quote.model_dump(mode="json")
+
+    def _handle_update(self, data: dict):
+        quote_id = UUID(data.pop("id"))
+        quote = self.service.update(quote_id, QuoteUpdate(**data))
+        return quote.model_dump(mode="json")
+
+    def _handle_send(self, data: dict):
+        quote = self.service.transition(UUID(data["id"]), "sent")
+        return quote.model_dump(mode="json")
+
+    def _handle_accept(self, data: dict):
+        quote_id = UUID(data["id"])
+        ticket_id = UUID(data["created_ticket_id"])
+        quote = self.service.accept(quote_id, ticket_id)
+        return quote.model_dump(mode="json")
+
+    def _handle_reject(self, data: dict):
+        quote = self.service.transition(UUID(data["id"]), "rejected")
+        return quote.model_dump(mode="json")
+
+    def _handle_expire(self, data: dict):
+        quote = self.service.transition(UUID(data["id"]), "expired")
+        return quote.model_dump(mode="json")
+
+    def _handle_archive(self, data: dict):
+        quote = self.service.transition(UUID(data["id"]), "archived")
+        return quote.model_dump(mode="json")
+
+    def _handle_delete(self, data: dict):
+        quote_id = UUID(data["id"])
+        deleted = self.service.delete(quote_id)
+        if not deleted:
+            raise NotFoundError(f"Quote {quote_id} not found")
+        return {"deleted": True}
+
+
+class QuoteLineItemHandler:
+    """Manage quote line items scoped to draft quotes."""
+
+    ALLOWED_ACTIONS = {"create", "update", "delete", "list"}
+
+    def __init__(self, service):
+        self.service = service
+
+    def _handle_create(self, data: dict):
+        quote_id = UUID(data.pop("quote_id"))
+        li = self.service.create_line_item(quote_id, QuoteLineItemCreate(**data))
+        return li.model_dump(mode="json")
+
+    def _handle_update(self, data: dict):
+        li_id = UUID(data.pop("id"))
+        li = self.service.update_line_item(li_id, QuoteLineItemUpdate(**data))
+        return li.model_dump(mode="json")
+
+    def _handle_delete(self, data: dict):
+        li_id = UUID(data["id"])
+        deleted = self.service.delete_line_item(li_id)
+        if not deleted:
+            raise NotFoundError(f"Quote line item {li_id} not found")
+        return {"deleted": True}
+
+    def _handle_list(self, data: dict):
+        quote_id = UUID(data["quote_id"])
+        items = self.service.list_line_items(quote_id)
+        return [li.model_dump(mode="json") for li in items]

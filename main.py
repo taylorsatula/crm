@@ -38,6 +38,8 @@ from core.services.ticket_service import TicketService
 from core.services.ticket_closeout_service import TicketCloseoutService
 from core.services.square_import_service import SquareImportService
 from core.services.workspace_settings_service import WorkspaceSettingsService
+from core.services.lead_service import LeadService
+from core.services.quote_service import QuoteService
 from core.handlers.ticket_message_handler import (
     handle_ticket_completed_messages,
     handle_ticket_created_messages,
@@ -83,7 +85,7 @@ def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
     names = (
         "customer", "ticket", "catalog", "line_item", "invoice", "note",
         "attribute", "message", "address", "workspace_settings", "workflow",
-        "square_import", "closeout",
+        "square_import", "closeout", "lead", "quote",
     )
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.services[key])
@@ -168,6 +170,8 @@ def build_app_container() -> AppContainer:
             audit,
             ticket_service,
         ),
+        "lead": LeadService(postgres, audit, event_bus),
+        "quote": QuoteService(postgres, audit),
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
     clients = {"database": postgres, "vault": vault, "llm": llm, "email": email_client}

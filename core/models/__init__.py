@@ -29,6 +29,16 @@ from core.models.closeout import (
     NextServiceDisposition,
     TicketCloseout,
 )
+from core.models.quote import (
+    Quote,
+    QuoteCreate,
+    QuoteUpdate,
+    QuoteStatus,
+    QuoteLineItem,
+    QuoteLineItemCreate,
+    QuoteLineItemUpdate,
+    QUOTE_VALID_TRANSITIONS,
+)
 
 __all__ = [
     # Customer
@@ -61,4 +71,8 @@ __all__ = [
     "NewCustomerJobBookingCreate",
     # Structured closeout
     "CloseoutRequest", "CustomerCapture", "NextServiceDisposition", "TicketCloseout",
+    # Quote
+    "Quote", "QuoteCreate", "QuoteUpdate", "QuoteStatus",
+    "QuoteLineItem", "QuoteLineItemCreate", "QuoteLineItemUpdate",
+    "QUOTE_VALID_TRANSITIONS",
 ]
