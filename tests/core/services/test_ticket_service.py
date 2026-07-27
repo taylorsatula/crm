@@ -95,6 +95,55 @@ class TestTicketCreate:
         assert ticket.clock_out_at is None
         assert ticket.closed_at is None
 
+    def test_seven_hour_job_and_buffer_fit_from_nine_am_eastern(
+        self,
+        test_workspace_id,
+    ):
+        """9:00-16:00 plus a 30-minute buffer fits a 17:00 workday."""
+        from core.exceptions import TicketScheduleUnavailableError
+        from core.services.ticket_service import TicketService
+        from utils.workspace_context import workspace_context
+        from utils.timezone import now_utc
+
+        class _ScheduleDb:
+            def execute_single(self, query, params=None):
+                if "FROM workspace_settings AS settings" in query:
+                    return {
+                        "workspace_id": test_workspace_id,
+                        "timezone": "America/Detroit",
+                        "workday_start": "08:00",
+                        "workday_end": "17:00",
+                        "working_days": ["mon", "tue", "wed", "thu", "fri"],
+                        "default_appointment_minutes": 120,
+                        "travel_buffer_minutes": 30,
+                        "appointment_confirmation_enabled": True,
+                        "appointment_reminder_minutes": 1440,
+                        "service_reminder_mode": "ask_each_time",
+                        "created_at": now_utc(),
+                        "updated_at": now_utc(),
+                    }
+                return None
+
+        ticket_service = TicketService(_ScheduleDb(), None, None)
+        eastern = ZoneInfo("America/Detroit")
+
+        with workspace_context(test_workspace_id, "America/Detroit"):
+            ticket_service._validate_schedule(
+                scheduled_at=datetime(2026, 7, 28, 9, 0, tzinfo=eastern),
+                duration_minutes=420,
+            )
+
+            with pytest.raises(TicketScheduleUnavailableError) as captured:
+                ticket_service._validate_schedule(
+                    scheduled_at=datetime(2026, 7, 28, 10, 0, tzinfo=eastern),
+                    duration_minutes=420,
+                )
+
+        assert captured.value.details["reason"] == "outside_workday"
+        assert captured.value.details["requested_buffered_end"] == (
+            "2026-07-28T17:30:00-04:00"
+        )
+
     def test_schedule_conflict_identifies_conflicting_interval(
         self,
         db,
