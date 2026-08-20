@@ -168,7 +168,7 @@ def create_data_router(services: dict) -> APIRouter:
         if type == "tickets":
             return _handle_tickets(
                 ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc,
-                note_svc, message_svc, invoice_svc, attribute_svc, id, customer_id, filter, includes, limit,
+                note_svc, message_svc, invoice_svc, attribute_svc, closeout_svc, id, customer_id, filter, includes, limit,
                 request.state.request_id,
             )
 
@@ -301,7 +301,7 @@ def _handle_customers(
 
 def _handle_tickets(
     ticket_svc, customer_svc, address_svc, line_item_svc, catalog_svc, note_svc,
-    message_svc, invoice_svc, attribute_svc, id, customer_id, filter, includes, limit, request_id
+    message_svc, invoice_svc, attribute_svc, closeout_svc, id, customer_id, filter, includes, limit, request_id
 ):
     if id:
         ticket = ticket_svc.get_by_id(UUID(id))
