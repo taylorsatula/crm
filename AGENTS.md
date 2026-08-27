@@ -177,6 +177,11 @@ When modifying files, edit as if new code was always intended - never reference 
 ### Container Deployment
 - `Dockerfile` and `compose.yaml` define the CRM appliance: a private CRM API with its own PostgreSQL, Vault, AppRole bootstrap sidecar, one-shot schema migration service, and persistent `crm_*` volumes. Its Compose resources are `crm_*`-namespaced so it can be included beside `crm_mira`; `CRM_LIFECYCLE_SECRET_FILE` supplies their shared lifecycle credential. See `docs/DOCKER_DEPLOYMENT.md`; never remove its volumes as part of deployment or recovery.
 
+### Remote Server (192.168.1.9)
+- **Topology**: Local `origin` is GitHub (`taylorsatula/crm`); local `deploy` remote is `ssh://admin@192.168.1.9/home/admin/crm-origin.git` (bare repo). The deploy dir `/opt/crm` has `origin` pointing at the same bare repo and `github` pointing at GitHub. Canonical branch is `main` everywhere (local, GitHub, server bare repo, deploy dir).
+- **Deploy command**: `./scripts/deploy_remote.sh` — refuses to run with uncommitted changes to tracked files. Pipeline: `git push deploy main` → ssh → `git fetch origin && git reset --hard origin/main` → `docker compose -f compose.yaml -f compose.crm.yaml build crm && up -d --force-recreate migrations crm` → in-container `/health/ready` probe (with bounded retry). The `crm` appliance is launched as part of the `crm_mira` Compose project via `compose.crm.yaml`, so both compose files are used. The migrations one-shot is force-recreated so migration-only changes (no `crm` image change) still apply: Compose does not recreate a completed one-shot from bind-mount content alone.
+- **Post-server probe**: runs in-container, bounded to 15 attempts (2s apart) after a 15s startup delay, hitting `http://127.0.0.1:8000/health/ready` via stdlib `urllib`. `/health/ready` bypasses workspace auth (it is in `WorkspaceAccessMiddleware.HEALTH_PATHS`) and exercises the real dependency checks (postgres, vault, llm, email), returning 503 if any are unhealthy.
+
 ### Test Execution Strategy
 - **During Development**: Run only the specific tests you're working on (`pytest tests/path/to/test_file.py::test_name`)
 - **Before Commit**: Run the full test suite (`pytest tests/`) to catch regressions
