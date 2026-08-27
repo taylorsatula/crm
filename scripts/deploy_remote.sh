@@ -6,10 +6,12 @@
 # container, re-runs the one-shot migrations service, then probes the live
 # /health/ready endpoint in-container with bounded retry.
 #
-# The crm appliance is launched as part of the crm_mira Compose project via
-# compose.crm.yaml, so both compose files are used. The migrations one-shot is
-# force-recreated so migration-only changes (no crm image change) still apply:
-# Compose does not recreate a completed one-shot from bind-mount content alone.
+# The crm appliance is launched as part of the crm_mira Compose project:
+# compose.crm.yaml (in /opt/crm_mira) includes ../crm/compose.yaml, so Compose
+# is driven from /opt/crm_mira with both files while git ops target /opt/crm.
+# The migrations one-shot is force-recreated so migration-only changes (no crm
+# image change) still apply: Compose does not recreate a completed one-shot
+# from bind-mount content alone.
 #
 # Refuses to run with uncommitted LOCAL changes (tracked files).
 # On the server, any unexpected uncommitted changes in the deploy dir are
@@ -21,7 +23,8 @@ set -eu
 
 cd "$(dirname "$0")/.."
 SERVER=admin@192.168.1.9
-DEPLOY_DIR=/opt/crm
+GIT_DIR=/opt/crm
+COMPOSE_DIR=/opt/crm_mira
 COMPOSE="docker compose -f compose.yaml -f compose.crm.yaml"
 BRANCH=main
 
@@ -33,17 +36,18 @@ fi
 
 git push deploy "$BRANCH"
 
-# $DEPLOY_DIR and $COMPOSE are expanded locally (the remote shell does not have them);
+# $GIT_DIR, $COMPOSE_DIR and $COMPOSE are expanded locally (the remote shell does not have them);
 # every other \$-prefixed token is expanded by the remote shell.
 ssh "$SERVER" "set -e
-cd $DEPLOY_DIR
+cd $GIT_DIR
 git fetch origin
 # Stash any unexpected local changes before resetting to origin.
 if [ -n \"\$(git diff --name-only HEAD)\" ] || [ -n \"\$(git ls-files --others --exclude-standard)\" ]; then
     git stash push --include-untracked -m \"saved before deploy \$(date -u +%Y%m%dT%H%M%SZ)\"
-    echo \"WARNING: unexpected uncommitted changes in $DEPLOY_DIR stashed before reset. Recover with: cd $DEPLOY_DIR && git stash list && git stash apply\" >&2
+    echo \"WARNING: unexpected uncommitted changes in $GIT_DIR stashed before reset. Recover with: cd $GIT_DIR && git stash list && git stash apply\" >&2
 fi
 git reset --hard origin/$BRANCH
+cd $COMPOSE_DIR
 $COMPOSE build crm
 $COMPOSE up -d --force-recreate migrations crm
 echo 'Waiting 15 seconds for app startup...'
