@@ -1,6 +1,7 @@
 """Shared fixtures for the workspace-scoped CRM test suite."""
 
 import hashlib
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
@@ -16,6 +17,18 @@ vault_module._vault_client_instance = None
 vault_module._secret_cache.clear()
 
 from utils.workspace_context import clear_workspace_context, workspace_context
+
+# Optional isolated test database (e.g. CRM_TEST_DB=crm_test). When set, the
+# db/db_admin fixtures repoint at this database instead of the vault default,
+# so the suite never touches a populated application database. Unset = current
+# behavior (vault database/url + database/admin_url).
+_TEST_DB_NAME = os.getenv("CRM_TEST_DB")
+
+
+def _repoint_db(url: str) -> str:
+    if not _TEST_DB_NAME:
+        return url
+    return url.rsplit("/", 1)[0] + "/" + _TEST_DB_NAME
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
 TEST_WORKSPACE_B_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -50,19 +63,27 @@ def authenticated_context(test_workspace_id):
 def db_url():
     from clients.vault_client import get_database_url
 
-    return get_database_url()
+    return _repoint_db(get_database_url())
+
+
+@pytest.fixture(scope="session")
+def _db_pool(db_url):
+    """One connection pool per session; the per-test `db` fixture checks out of it."""
+    from psycopg_pool import ConnectionPool
+
+    pool = ConnectionPool(conninfo=db_url, min_size=1, max_size=4, open=True)
+    yield pool
+    pool.close()
 
 
 @pytest.fixture
-def db(db_url):
+def db(_db_pool):
     """Transactional application connection that applies workspace RLS per query."""
     from psycopg import sql
     from psycopg.rows import dict_row
-    from psycopg_pool import ConnectionPool
     from utils.workspace_context import _current_workspace_id
 
-    pool = ConnectionPool(conninfo=db_url, min_size=1, max_size=2, open=True)
-    with pool.connection() as conn:
+    with _db_pool.connection() as conn:
         conn.autocommit = False
         with conn.transaction():
             def _apply_rls(cur):
@@ -108,7 +129,6 @@ def db(db_url):
                         yield
 
             yield TestDb()
-    pool.close()
 
 
 @pytest.fixture(scope="session")
@@ -117,7 +137,7 @@ def db_admin(db_url):
     from clients.vault_client import VaultClient
 
     vault = VaultClient()
-    client = PostgresClient(vault.get_secret("database", "admin_url"))
+    client = PostgresClient(_repoint_db(vault.get_secret("database", "admin_url")))
     yield client
     client.close()
 
@@ -156,18 +176,18 @@ def reset_db_state(request):
 
 @pytest.fixture
 def as_test_workspace(test_workspace_id, db):
-    db.execute(
-        """
-        UPDATE workspace_settings
-        SET workday_start = '00:00',
-            workday_end = '23:59',
-            working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']::TEXT[],
-            travel_buffer_minutes = 0
-        WHERE workspace_id = %s
-        """,
-        (test_workspace_id,),
-    )
     with workspace_context(test_workspace_id, "America/Chicago"):
+        db.execute(
+            """
+            UPDATE workspace_settings
+            SET workday_start = '00:00',
+                workday_end = '23:59',
+                working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']::TEXT[],
+                travel_buffer_minutes = 0
+            WHERE workspace_id = %s
+            """,
+            (test_workspace_id,),
+        )
         yield test_workspace_id
 
 
@@ -295,10 +315,25 @@ def square_import_service(db, audit):
 
 
 @pytest.fixture
+def lead_service(db, audit, event_bus):
+    from core.services.lead_service import LeadService
+
+    return LeadService(db, audit, event_bus)
+
+
+@pytest.fixture
+def quote_service(db, audit):
+    from core.services.quote_service import QuoteService
+
+    return QuoteService(db, audit)
+
+
+@pytest.fixture
 def services(
     customer_service, ticket_service, catalog_service, line_item_service,
     invoice_service, note_service, attribute_service, message_service, address_service,
     closeout_service, workspace_settings_service, workflow_service, square_import_service,
+    lead_service, quote_service,
 ):
     return {
         "customer": customer_service,
@@ -314,4 +349,6 @@ def services(
         "workspace_settings": workspace_settings_service,
         "square_import": square_import_service,
         "workflow": workflow_service,
+        "lead": lead_service,
+        "quote": quote_service,
     }
