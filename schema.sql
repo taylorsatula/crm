@@ -990,7 +990,6 @@ ALTER TABLE quotes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY quotes_isolation ON quotes FOR ALL
     USING (
         workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid
-        AND deleted_at IS NULL
     )
     WITH CHECK (
         workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid
@@ -1042,7 +1041,6 @@ ALTER TABLE quote_line_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY quote_line_items_isolation ON quote_line_items FOR ALL
     USING (
         workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid
-        AND deleted_at IS NULL
     )
     WITH CHECK (
         workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::uuid
