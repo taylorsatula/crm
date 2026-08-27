@@ -94,9 +94,12 @@ def _service_proxies(ref: _ContainerRef) -> dict[str, Any]:
 
 
 def _health_proxies(ref: _ContainerRef) -> dict[str, Any]:
+    # Email is not a readiness dependency: the gateway (mira_email_gateway_forbiz.php)
+    # has no health endpoint, so it cannot be probed without sending a real email.
+    # It stays wired in `clients` for sending but is excluded from readiness checks.
     return {
         name: _ContainerProxy(ref, lambda container, key=name: container.health_checks[key])
-        for name in ("database", "vault", "llm", "email")
+        for name in ("database", "vault", "llm")
     }
 
 
@@ -175,12 +178,15 @@ def build_app_container() -> AppContainer:
     }
     event_handlers = wire_event_handlers(event_bus, AttributeExtractor(llm), services)
     clients = {"database": postgres, "vault": vault, "llm": llm, "email": email_client}
+    # Readiness checks exclude email: the gateway has no health endpoint (see
+    # _health_proxies). email_client remains in `clients` for sending.
+    health_checks = {"database": postgres, "vault": vault, "llm": llm}
     return AppContainer(
         clients=clients,
         services=services,
         event_bus=event_bus,
         event_handlers=event_handlers,
-        health_checks=clients,
+        health_checks=health_checks,
         lifecycle_service_secret=lifecycle_service_secret,
     )
 
