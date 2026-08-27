@@ -180,7 +180,7 @@ class TicketHandler:
 
     def _handle_closeout(self, data: dict):
         result = self.closeout_service.closeout(CloseoutRequest(**data))
-        return result.model_dump(mode="json")
+        return result
 
     def _handle_cancel(self, data: dict):
         ticket = self.service.cancel(UUID(data["id"]))
