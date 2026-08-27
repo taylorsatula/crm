@@ -19,34 +19,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def message_service(db):
-    from core.services.message_service import MessageService
-    from core.audit import AuditLogger
-    return MessageService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(first_name="Cancel", last_name="Test"))
 
@@ -131,10 +103,10 @@ class TestTicketCancellationHandler:
     def test_no_pending_messages_is_noop(
         self, db, as_test_workspace, handler, message_service, test_ticket
     ):
-        """No error when ticket has zero pending messages."""
+        """No pending messages on the ticket before or after the handler runs."""
         event = TicketCancelled(ticket=test_ticket)
         handler(event)
-        # No assertion needed — just verifying it doesn't raise
+        assert message_service.list_pending_for_ticket(test_ticket.id) == []
 
     def test_does_not_cancel_messages_for_other_tickets(
         self, db, as_test_workspace, handler, message_service,

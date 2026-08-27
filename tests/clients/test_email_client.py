@@ -83,7 +83,7 @@ class TestSendEmail:
 
     @responses.activate
     def test_successful_send(self, client):
-        """Successful send completes without exception."""
+        """Successful send posts the signed custom-email payload to the gateway."""
         responses.add(
             responses.POST,
             self.GATEWAY_URL,
@@ -98,17 +98,63 @@ class TestSendEmail:
         )
         assert result is None
 
+        assert len(responses.calls) == 1
+        request = responses.calls[0].request
+        assert request.url == self.GATEWAY_URL
+        assert request.body == (
+            '{"type":"custom","email":"user@example.com",'
+            '"subject":"Test Subject","body":"Test body","sender":"system"}'
+        )
+        assert request.headers["X-API-Key"] == "test-api-key"
+        assert request.headers["Content-Type"] == "application/json"
+        assert request.headers["X-Signature"] == (
+            "a3e07d092f07b269b1d8500837e19460550507913bee38227e96c533e3cc5f56"
+        )
+
     @responses.activate
     def test_gateway_error_raises_exception(self, client):
-        """Gateway error raises EmailGatewayError."""
+        """Gateway error raises EmailGatewayError with the gateway message."""
         responses.add(
             responses.POST,
             self.GATEWAY_URL,
-            json={"success": False},
+            json={"success": False, "message": "rate limited"},
             status=500,
         )
 
-        with pytest.raises(EmailGatewayError):
+        with pytest.raises(EmailGatewayError, match="Gateway error"):
+            client.send_email(
+                to="user@example.com",
+                subject="Test",
+                body="Body",
+            )
+
+    @responses.activate
+    def test_connection_failure_raises_email_gateway_error(self, client):
+        """Transport failure surfaces as EmailGatewayError, not a requests exception."""
+        responses.add(
+            responses.POST,
+            self.GATEWAY_URL,
+            body=responses.ConnectionError("boom"),
+        )
+
+        with pytest.raises(EmailGatewayError, match="Connection failed"):
+            client.send_email(
+                to="user@example.com",
+                subject="Test",
+                body="Body",
+            )
+
+    @responses.activate
+    def test_non_json_response_raises_email_gateway_error(self, client):
+        """A non-JSON gateway response is treated as a gateway failure."""
+        responses.add(
+            responses.POST,
+            self.GATEWAY_URL,
+            body="<html>not json</html>",
+            status=200,
+        )
+
+        with pytest.raises(EmailGatewayError, match="Invalid response"):
             client.send_email(
                 to="user@example.com",
                 subject="Test",

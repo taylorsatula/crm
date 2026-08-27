@@ -8,61 +8,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def invoice_service(db, event_bus):
-    """InvoiceService with real DB."""
-    from core.services.invoice_service import InvoiceService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return InvoiceService(db, audit, event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    """TicketService for test setup."""
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def line_item_service(db):
-    """LineItemService for test setup."""
-    from core.services.line_item_service import LineItemService
-    from core.audit import AuditLogger
-
-    return LineItemService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for test setup."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    """AddressService for test setup."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def catalog_service(db):
-    """CatalogService for test setup."""
-    from core.services.catalog_service import CatalogService
-    from core.audit import AuditLogger
-
-    return CatalogService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
@@ -160,12 +105,27 @@ class TestInvoiceCreate:
         assert invoice.sent_at is None
         assert invoice.paid_at is None
 
-    def test_generates_invoice_number(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
-        """Invoice number is auto-generated."""
-        invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
+    def test_generates_sequential_invoice_numbers_same_day(self, db, as_test_workspace, invoice_service, ticket_service, line_item_service, test_customer, test_address, test_service):
+        """Invoice numbers are INV-YYYYMMDD-XXXX, incrementing per day."""
+        from core.models import TicketCreate, LineItemCreate
 
-        assert invoice.invoice_number is not None
-        assert len(invoice.invoice_number) > 0
+        def ticket_with_items(offset_days=1):
+            ticket = ticket_service.create(TicketCreate(
+                customer_id=test_customer.id,
+                address_id=test_address.id,
+                scheduled_at=now_utc() + timedelta(days=offset_days),
+            ))
+            line_item_service.create(ticket.id, LineItemCreate(
+                service_id=test_service.id, quantity=1, total_price_cents=5000,
+            ))
+            return ticket
+
+        first = invoice_service.create_from_ticket(ticket_with_items(1).id)
+        second = invoice_service.create_from_ticket(ticket_with_items(2).id)
+
+        expected_prefix = f"INV-{now_utc().strftime('%Y%m%d')}-"
+        assert first.invoice_number == f"{expected_prefix}0001"
+        assert second.invoice_number == f"{expected_prefix}0002"
 
     def test_rejects_ticket_without_items(self, db, as_test_workspace, invoice_service, ticket_service, test_customer, test_address):
         """Cannot create invoice from ticket with no line items."""
@@ -269,6 +229,19 @@ class TestInvoicePayment:
         # Second payment - pay the rest
         remaining = invoice.total_amount_cents - first_payment
         updated = invoice_service.record_payment(invoice.id, remaining)
+
+        assert updated.amount_paid_cents == invoice.total_amount_cents
+        assert updated.status == InvoiceStatus.PAID
+
+    def test_overpayment_clamps_to_total(self, db, as_test_workspace, invoice_service, test_ticket_with_items):
+        """Paying more than the total clamps amount_paid to total and marks PAID."""
+        from core.models import InvoiceStatus
+
+        invoice = invoice_service.create_from_ticket(test_ticket_with_items.id)
+        invoice_service.send(invoice.id)
+
+        overpayment = invoice.total_amount_cents + 5000
+        updated = invoice_service.record_payment(invoice.id, overpayment)
 
         assert updated.amount_paid_cents == invoice.total_amount_cents
         assert updated.status == InvoiceStatus.PAID

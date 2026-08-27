@@ -9,34 +9,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def ticket_service(db, event_bus):
-    """TicketService with real DB."""
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return TicketService(db, audit, event_bus)
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for test setup."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    """AddressService for test setup."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
@@ -204,6 +176,44 @@ class TestTicketCreate:
             "conflicting_buffered_end": "2030-01-07T10:30:00-06:00",
         }
 
+    def test_update_rescheduled_into_conflict_rejects(
+        self, db, as_test_workspace, test_workspace_id, ticket_service, test_customer, test_address,
+    ):
+        """Moving a ticket's scheduled_at onto another ticket's slot re-validates and rejects."""
+        from core.exceptions import TicketScheduleConflictError
+        from core.models import TicketCreate, TicketUpdate
+
+        db.execute(
+            """
+            UPDATE workspace_settings
+            SET workday_start = '08:00', workday_end = '17:00',
+                working_days = ARRAY['mon','tue','wed','thu','fri']::TEXT[],
+                travel_buffer_minutes = 30
+            WHERE workspace_id = %s
+            """,
+            (test_workspace_id,),
+        )
+        slot_a = datetime(2030, 1, 7, 9, 0, tzinfo=ZoneInfo("America/Chicago"))
+        slot_b = datetime(2030, 1, 7, 13, 0, tzinfo=ZoneInfo("America/Chicago"))
+        first = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id, address_id=test_address.id,
+            scheduled_at=slot_a, scheduled_duration_minutes=60,
+        ))
+        second = ticket_service.create(TicketCreate(
+            customer_id=test_customer.id, address_id=test_address.id,
+            scheduled_at=slot_b, scheduled_duration_minutes=60,
+        ))
+
+        # Moving second onto first's slot conflicts (excluding_ticket_id prevents self-conflict).
+        with pytest.raises(TicketScheduleConflictError) as captured:
+            ticket_service.update(second.id, TicketUpdate(scheduled_at=slot_a))
+        assert captured.value.code == "TICKET_SCHEDULE_CONFLICT"
+        assert captured.value.details["conflicting_ticket_id"] == str(first.id)
+
+        # Sanity: updating a ticket to its own slot is a no-op (self-exclusion works).
+        unchanged = ticket_service.update(second.id, TicketUpdate(scheduled_at=slot_b))
+        assert unchanged.scheduled_at == slot_b
+
 
 class TestTicketClockIn:
     """Tests for TicketService.clock_in."""
@@ -224,7 +234,12 @@ class TestTicketClockIn:
         assert updated.status == TicketStatus.IN_PROGRESS
 
     def test_clock_in_rejects_non_scheduled(self, db, as_test_workspace, ticket_service, test_customer, test_address):
-        """Cannot clock into completed ticket (already clocked in takes precedence)."""
+        """Cannot clock into a ticket that is no longer SCHEDULED.
+
+        close() has no clock_in precondition, so a ticket can reach COMPLETED
+        without ever clocking in — clock_in must then reject it on status.
+        """
+        from core.exceptions import TicketNotClockableError
         from core.models import TicketCreate
 
         ticket = ticket_service.create(TicketCreate(
@@ -233,14 +248,11 @@ class TestTicketClockIn:
             scheduled_at=now_utc() + timedelta(days=1)
         ))
 
-        # Clock in, clock out, close
-        ticket_service.clock_in(ticket.id)
-        ticket_service.clock_out(ticket.id)
         ticket_service.close(ticket.id)
 
-        # Since we already clocked in, that's the error we get (more specific)
-        with pytest.raises(ValueError, match="already clocked in"):
+        with pytest.raises(TicketNotClockableError, match="cannot clock in") as exc:
             ticket_service.clock_in(ticket.id)
+        assert exc.value.code == "TICKET_NOT_CLOCKABLE"
 
     def test_clock_in_rejects_already_clocked(self, db, as_test_workspace, ticket_service, test_customer, test_address):
         """Cannot clock in twice."""

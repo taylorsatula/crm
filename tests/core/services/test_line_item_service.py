@@ -8,52 +8,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def line_item_service(db):
-    """LineItemService with real DB."""
-    from core.services.line_item_service import LineItemService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return LineItemService(db, audit)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    """TicketService for test setup."""
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for test setup."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    """AddressService for test setup."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def catalog_service(db):
-    """CatalogService for test setup."""
-    from core.services.catalog_service import CatalogService
-    from core.audit import AuditLogger
-
-    return CatalogService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
@@ -224,6 +178,26 @@ class TestLineItemUpdate:
 
         assert updated.quantity == 3
         assert updated.total_price_cents == 15000
+
+    def test_update_quantity_recomputes_total_when_price_not_supplied(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
+        """Updating quantity without an explicit total recomputes total = qty * unit."""
+        from core.models import LineItemCreate, LineItemUpdate
+
+        line_item = line_item_service.create(test_ticket.id, LineItemCreate(
+            service_id=test_service.id, quantity=1, unit_price_cents=5000, total_price_cents=5000,
+        ))
+        updated = line_item_service.update(line_item.id, LineItemUpdate(quantity=3))
+        assert updated.total_price_cents == 15000  # 3 * 5000
+
+    def test_update_unit_price_recomputes_total(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
+        """Updating unit_price without an explicit total recomputes total = qty * unit."""
+        from core.models import LineItemCreate, LineItemUpdate
+
+        line_item = line_item_service.create(test_ticket.id, LineItemCreate(
+            service_id=test_service.id, quantity=2, unit_price_cents=5000, total_price_cents=10000,
+        ))
+        updated = line_item_service.update(line_item.id, LineItemUpdate(unit_price_cents=7500))
+        assert updated.total_price_cents == 15000  # 2 * 7500
 
     def test_updates_description(self, db, as_test_workspace, line_item_service, test_ticket, test_service):
         """Updates line item description."""

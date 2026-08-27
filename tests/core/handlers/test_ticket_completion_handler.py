@@ -14,48 +14,16 @@ from unittest.mock import Mock
 import pytest
 
 from core.events import TicketCompleted
-from core.handlers.ticket_completion_handler import handle_ticket_completed
+from core.handlers.ticket_completion_handler import (
+    handle_ticket_completed,
+    process_ticket_completed,
+)
 from core.models import (
     CustomerCreate, TicketCreate, NoteCreate,
     AttributeCreate,
 )
 from core.models.attribute import ExtractedAttributes
 from utils.timezone import now_utc
-
-
-@pytest.fixture
-def note_service(db, event_bus):
-    from core.services.note_service import NoteService
-    from core.audit import AuditLogger
-    return NoteService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def attribute_service(db):
-    from core.services.attribute_service import AttributeService
-    from core.audit import AuditLogger
-    return AttributeService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-    return AddressService(db, AuditLogger(db))
 
 
 @pytest.fixture
@@ -88,7 +56,7 @@ def test_ticket(as_test_workspace, ticket_service, test_customer, test_address):
 
 @pytest.fixture
 def handler(mock_extractor, attribute_service, note_service):
-    return handle_ticket_completed(mock_extractor, attribute_service, note_service)
+    return process_ticket_completed(mock_extractor, attribute_service, note_service)
 
 
 class TestTicketCompletionHandler:
@@ -205,3 +173,46 @@ class TestTicketCompletionHandler:
         handler(event)
 
         assert note_service.get_by_id(note.id).processed_at is not None
+
+
+class TestTicketCompletionHandlerIsFireAndForget:
+    """The public handler runs the synchronous core in a background daemon thread.
+
+    Uses in-memory fakes (no DB) so the daemon thread never races a fixture
+    teardown; a bounded Event wait makes it deterministic.
+    """
+
+    def test_handler_runs_processing_in_background_thread(self, mock_extractor):
+        import threading
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        completed = threading.Event()
+        recorded = {}
+
+        class FakeNoteService:
+            def list_unprocessed_for_ticket(self, ticket_id):
+                return [SimpleNamespace(id=uuid4(), content="x")]
+
+            def mark_processed(self, note_id):
+                recorded["processed"] = note_id
+                completed.set()
+
+        class FakeAttributeService:
+            def bulk_create_from_extraction(self, *args, **kwargs):
+                recorded["bulk_created"] = True
+
+        mock_extractor.extract_attributes.return_value = ExtractedAttributes(
+            attributes={}, raw_response="{}", confidence=Decimal("0.80"),
+        )
+
+        handler = handle_ticket_completed(
+            mock_extractor, FakeAttributeService(), FakeNoteService()
+        )
+
+        ticket = SimpleNamespace(id=uuid4(), customer_id=uuid4())
+        handler(TicketCompleted(ticket=ticket))
+
+        assert completed.wait(timeout=2.0), "background thread did not process the note"
+        assert recorded.get("processed") is not None
+        assert recorded.get("bulk_created") is True

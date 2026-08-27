@@ -263,42 +263,6 @@ class TestTicketActions:
         assert body["error"]["code"] == "TICKET_SCHEDULE_UNAVAILABLE"
         assert body["data"]["reason"] == "non_working_day"
 
-    def test_outside_schedule_allowed_with_override(
-        self,
-        client,
-        db,
-        as_test_workspace,
-        test_workspace_id,
-        sample_customer,
-        sample_address,
-    ):
-        db.execute(
-            """
-            UPDATE workspace_settings
-            SET workday_start = '08:00',
-                workday_end = '17:00',
-                working_days = ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
-                travel_buffer_minutes = 30
-            WHERE workspace_id = %s
-            """,
-            (test_workspace_id,),
-        )
-        sunday = datetime(2030, 1, 6, 10, 0, tzinfo=ZoneInfo("America/Chicago"))
-        response = client.post("/api/actions", json={
-            "domain": "ticket",
-            "action": "create",
-            "data": {
-                "customer_id": str(sample_customer.id),
-                "address_id": str(sample_address.id),
-                "scheduled_at": sunday.isoformat(),
-                "override_schedule_validation": True,
-            },
-        })
-
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["status"] == "scheduled"
-
     def test_clock_in(self, client, sample_ticket):
         response = client.post("/api/actions", json={
             "domain": "ticket",
@@ -310,7 +274,7 @@ class TestTicketActions:
         assert response.json()["data"]["status"] == "in_progress"
         assert response.json()["data"]["clock_in_at"] is not None
 
-    def test_clock_in_already_clocked_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
+    def test_clock_in_already_clocked_returns_409(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
 
         response = client.post("/api/actions", json={
@@ -319,7 +283,8 @@ class TestTicketActions:
             "data": {"id": str(sample_ticket.id)},
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "TICKET_NOT_CLOCKABLE"
         assert "already clocked in" in response.json()["error"]["message"]
 
     def test_clock_out(self, client, as_test_workspace, ticket_service, sample_ticket):
@@ -334,14 +299,15 @@ class TestTicketActions:
         assert response.status_code == 200
         assert response.json()["data"]["clock_out_at"] is not None
 
-    def test_clock_out_without_clock_in_returns_400(self, client, sample_ticket):
+    def test_clock_out_without_clock_in_returns_409(self, client, sample_ticket):
         response = client.post("/api/actions", json={
             "domain": "ticket",
             "action": "clock_out",
             "data": {"id": str(sample_ticket.id)},
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "TICKET_NOT_CLOCKABLE"
         assert "not clocked in" in response.json()["error"]["message"]
 
     def test_close_route_is_rejected_without_structured_closeout(self, client, sample_ticket):
@@ -376,7 +342,7 @@ class TestTicketActions:
         assert data["ticket"]["actual_duration_minutes"] == 90
         assert data["closeout"]["quoted_scope_status"] == "completed"
 
-    def test_structured_closeout_already_closed_returns_400(
+    def test_structured_closeout_already_closed_returns_409(
         self,
         client,
         sample_ticket,
@@ -402,7 +368,8 @@ class TestTicketActions:
             "data": payload,
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "TICKET_NOT_CLOSEABLE"
         assert "already closed" in response.json()["error"]["message"]
 
     def test_cancel(self, client, sample_ticket):
@@ -415,7 +382,7 @@ class TestTicketActions:
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "cancelled"
 
-    def test_cancel_completed_returns_400(self, client, as_test_workspace, ticket_service, sample_ticket):
+    def test_cancel_completed_returns_409(self, client, as_test_workspace, ticket_service, sample_ticket):
         ticket_service.clock_in(sample_ticket.id)
         ticket_service.clock_out(sample_ticket.id)
         ticket_service.close(sample_ticket.id)
@@ -426,7 +393,8 @@ class TestTicketActions:
             "data": {"id": str(sample_ticket.id)},
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
         assert "cannot cancel" in response.json()["error"]["message"]
 
     def test_delete_ticket(self, client, sample_ticket):
@@ -447,6 +415,7 @@ class TestTicketActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 # =============================================================================
@@ -591,7 +560,7 @@ class TestLineItemActions:
         assert data["service_id"] == str(sample_service.id)
         assert data["total_price_cents"] == 8000
 
-    def test_create_line_item_on_closed_ticket_returns_400(
+    def test_create_line_item_on_closed_ticket_returns_409(
         self, client, as_test_workspace, ticket_service, sample_ticket, sample_service
     ):
         ticket_service.clock_in(sample_ticket.id)
@@ -607,7 +576,8 @@ class TestLineItemActions:
             },
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "TICKET_IMMUTABLE"
         assert "closed" in response.json()["error"]["message"].lower()
 
     def test_delete_line_item(self, client, as_test_workspace, line_item_service, sample_ticket, sample_service):
@@ -630,6 +600,7 @@ class TestLineItemActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 # =============================================================================
@@ -677,6 +648,7 @@ class TestNoteActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 # =============================================================================
@@ -723,6 +695,7 @@ class TestAddressActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
     def test_delete_address(self, client, sample_address):
         response = client.post("/api/actions", json={
@@ -742,6 +715,7 @@ class TestAddressActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 # =============================================================================
@@ -795,6 +769,7 @@ class TestCatalogActions:
         })
 
         assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 # =============================================================================

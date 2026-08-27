@@ -4,16 +4,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.fixture
-def catalog_service(db):
-    """CatalogService with real DB."""
-    from core.services.catalog_service import CatalogService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return CatalogService(db, audit)
-
-
 class TestServiceCreate:
     """Tests for CatalogService.create."""
 

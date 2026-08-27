@@ -2,26 +2,9 @@
 
 import pytest
 from uuid import uuid4
+from datetime import timedelta
 
-
-@pytest.fixture
-def address_service(db):
-    """AddressService with real DB."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return AddressService(db, audit)
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for creating test customers."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return CustomerService(db, audit, event_bus)
+from utils.timezone import now_utc
 
 
 @pytest.fixture
@@ -258,3 +241,24 @@ class TestAddressDelete:
             (address.id,)
         )
         assert len(rows) == 0
+
+    def test_rejects_delete_when_ticket_references_address(self, db, as_test_workspace, address_service, customer_service, ticket_service, test_customer):
+        """Address referenced by a ticket raises AddressInUseError, not an opaque FK 500."""
+        from core.exceptions import AddressInUseError
+        from core.models import TicketCreate, AddressCreate
+
+        address = address_service.create(AddressCreate(
+            customer_id=test_customer.id, street="Guarded", city="Austin", state="TX", zip="78701",
+        ))
+        ticket_service.create(TicketCreate(
+            customer_id=test_customer.id,
+            address_id=address.id,
+            scheduled_at=now_utc() + timedelta(days=1),
+        ))
+
+        with pytest.raises(AddressInUseError) as exc:
+            address_service.delete(address.id)
+        assert exc.value.code == "ADDRESS_IN_USE"
+        assert exc.value.http_status == 409
+        # Address still exists.
+        assert address_service.get_by_id(address.id) is not None

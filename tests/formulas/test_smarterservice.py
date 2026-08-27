@@ -12,6 +12,7 @@ from formulas.smarterservice import (
     DEFAULT_BASE_LOCATION,
     best_candidate_per_day,
     calendar_payload_from_events,
+    candidate_dates,
     candidate_score,
     evaluate_slot,
     generate_candidate_slots,
@@ -24,7 +25,7 @@ from formulas.smarterservice import (
 )
 
 
-TODAY = date(2026, 5, 9)
+TODAY = date(2026, 5, 10)  # Sunday; candidate window uses TODAY+1.. (Mon-Fri), never TODAY itself
 
 
 def appointment(day, start, end, latitude=0.0, longitude=0.0):
@@ -108,6 +109,15 @@ def test_final_score_uses_variant_4_weights():
 def test_parse_duration_accepts_human_hour_minute_shape():
     assert parse_duration_minutes("3h5m") == 185
     assert parse_duration_minutes("3h 5m") == 185
+
+
+def test_candidate_dates_excludes_weekends():
+    """candidate_dates skips Saturdays and Sundays within the horizon window."""
+    friday = date(2026, 5, 15)
+    assert candidate_dates(friday, horizon_days=4) == [
+        date(2026, 5, 18),  # Mon (Sat 5/16 + Sun 5/17 excluded)
+        date(2026, 5, 19),  # Tue
+    ]
 
 
 def test_candidate_generation_rejects_days_that_already_have_four_jobs():

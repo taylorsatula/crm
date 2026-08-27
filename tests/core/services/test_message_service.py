@@ -9,43 +9,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def message_service(db):
-    """MessageService with real DB."""
-    from core.services.message_service import MessageService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return MessageService(db, audit)
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for test setup."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    """TicketService for test setup."""
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    """AddressService for test setup."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate
@@ -133,6 +96,29 @@ class TestMessageSchedule:
         assert message.ticket_id == test_ticket.id
         assert message.message_type == MessageType.APPOINTMENT_REMINDER
         assert message.template_name == "appointment_reminder_24h"
+
+    def test_schedule_rejects_ticket_owned_by_another_customer(self, db, as_test_workspace, message_service, customer_service, address_service, ticket_service):
+        """A message cannot be attached to another customer's ticket."""
+        from core.models import ScheduledMessageCreate, MessageType, CustomerCreate, AddressCreate, TicketCreate
+
+        customer_a = customer_service.create(CustomerCreate(first_name="Owner", last_name="A"))
+        customer_b = customer_service.create(CustomerCreate(first_name="Other", last_name="B"))
+        address_b = address_service.create(AddressCreate(
+            customer_id=customer_b.id, street="9 Other Way", city="Austin", state="TX", zip="78701",
+        ))
+        ticket_b = ticket_service.create(TicketCreate(
+            customer_id=customer_b.id, address_id=address_b.id,
+            scheduled_at=now_utc() + timedelta(days=1),
+        ))
+
+        with pytest.raises(ValueError, match="does not belong to customer"):
+            message_service.schedule(ScheduledMessageCreate(
+                customer_id=customer_a.id,
+                ticket_id=ticket_b.id,
+                message_type=MessageType.APPOINTMENT_REMINDER,
+                template_name="appointment_reminder_24h",
+                scheduled_for=now_utc() + timedelta(hours=24),
+            ))
 
 
 class TestMessageStatusTransitions:

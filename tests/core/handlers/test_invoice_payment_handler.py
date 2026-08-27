@@ -20,55 +20,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def message_service(db):
-    from core.services.message_service import MessageService
-    from core.audit import AuditLogger
-    return MessageService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def line_item_service(db):
-    from core.services.line_item_service import LineItemService
-    from core.audit import AuditLogger
-    return LineItemService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def catalog_service(db):
-    from core.services.catalog_service import CatalogService
-    from core.audit import AuditLogger
-    return CatalogService(db, AuditLogger(db))
-
-
-@pytest.fixture
-def invoice_service(db, event_bus):
-    from core.services.invoice_service import InvoiceService
-    from core.audit import AuditLogger
-    return InvoiceService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     return customer_service.create(CustomerCreate(
         first_name="Payment", last_name="Test", email="pay@test.com"
@@ -142,15 +93,6 @@ class TestInvoicePaymentHandler:
         assert msg.message_type == MessageType.CUSTOM
         assert msg.status == MessageStatus.PENDING
         assert test_invoice.invoice_number in msg.body
-
-    def test_receipt_references_correct_invoice_number(
-        self, db, as_test_workspace, handler, message_service, test_customer, test_invoice
-    ):
-        event = InvoicePaid(invoice=test_invoice)
-        handler(event)
-
-        messages = message_service.list_for_customer(test_customer.id)
-        assert any(test_invoice.invoice_number in (m.body or "") for m in messages)
 
     def test_schedules_exactly_one_message(
         self, db, as_test_workspace, handler, message_service, test_customer, test_invoice

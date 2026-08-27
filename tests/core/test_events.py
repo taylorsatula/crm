@@ -96,44 +96,44 @@ def _note(_customer):
 
 class TestTicketEventFactory:
 
-    def test_ticket_created_stores_ticket_by_identity(self, _ticket, as_test_workspace):
+    def test_ticket_created_stores_ticket_by_identity(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         assert event.ticket is _ticket
 
-    def test_ticket_clock_in_stores_ticket_by_identity(self, _ticket, as_test_workspace):
+    def test_ticket_clock_in_stores_ticket_by_identity(self, _ticket):
         event = TicketClockIn.create(ticket=_ticket)
         assert event.ticket is _ticket
 
-    def test_ticket_completed_stores_ticket_by_identity(self, _ticket, as_test_workspace):
+    def test_ticket_completed_stores_ticket_by_identity(self, _ticket):
         event = TicketCompleted.create(ticket=_ticket)
         assert event.ticket is _ticket
 
-    def test_ticket_cancelled_stores_ticket_by_identity(self, _ticket, as_test_workspace):
+    def test_ticket_cancelled_stores_ticket_by_identity(self, _ticket):
         event = TicketCancelled.create(ticket=_ticket)
         assert event.ticket is _ticket
 
 
 class TestInvoiceEventFactory:
 
-    def test_invoice_sent_stores_invoice_by_identity(self, _invoice, as_test_workspace):
+    def test_invoice_sent_stores_invoice_by_identity(self, _invoice):
         event = InvoiceSent.create(invoice=_invoice)
         assert event.invoice is _invoice
 
-    def test_invoice_paid_stores_invoice_by_identity(self, _invoice, as_test_workspace):
+    def test_invoice_paid_stores_invoice_by_identity(self, _invoice):
         event = InvoicePaid.create(invoice=_invoice)
         assert event.invoice is _invoice
 
 
 class TestCustomerEventFactory:
 
-    def test_customer_created_stores_customer_by_identity(self, _customer, as_test_workspace):
+    def test_customer_created_stores_customer_by_identity(self, _customer):
         event = CustomerCreated.create(customer=_customer)
         assert event.customer is _customer
 
 
 class TestNoteEventFactory:
 
-    def test_note_created_stores_note_by_identity(self, _note, as_test_workspace):
+    def test_note_created_stores_note_by_identity(self, _note):
         event = NoteCreated.create(note=_note)
         assert event.note is _note
 
@@ -145,30 +145,30 @@ class TestNoteEventFactory:
 
 class TestEventId:
 
-    def test_is_valid_uuid4_string(self, _ticket, as_test_workspace):
+    def test_is_valid_uuid4_string(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         parsed = UUID(event.event_id, version=4)
         assert str(parsed) == event.event_id
 
-    def test_unique_across_events(self, _ticket, as_test_workspace):
+    def test_unique_across_events(self, _ticket):
         ids = {TicketCreated.create(ticket=_ticket).event_id for _ in range(10)}
         assert len(ids) == 10
 
 
 class TestOccurredAt:
 
-    def test_is_utc_timezone_aware(self, _ticket, as_test_workspace):
+    def test_is_utc_timezone_aware(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         assert event.occurred_at.tzinfo == timezone.utc
 
-    def test_bounded_by_wall_clock(self, _ticket, as_test_workspace):
+    def test_bounded_by_wall_clock(self, _ticket):
         before = now_utc()
         event = TicketCreated.create(ticket=_ticket)
         after = now_utc()
         assert before <= event.occurred_at <= after
 
     def test_all_eight_event_types_generate_utc_occurred_at(
-        self, _ticket, _invoice, _customer, _note, as_test_workspace
+        self, _ticket, _invoice, _customer, _note
     ):
         events = [
             TicketCreated.create(ticket=_ticket),
@@ -194,32 +194,32 @@ class TestOccurredAt:
 
 class TestFrozenFields:
 
-    def test_cannot_reassign_ticket(self, _ticket, as_test_workspace):
+    def test_cannot_reassign_ticket(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         with pytest.raises(FrozenInstanceError):
             event.ticket = None
 
-    def test_cannot_reassign_invoice(self, _invoice, as_test_workspace):
+    def test_cannot_reassign_invoice(self, _invoice):
         event = InvoiceSent.create(invoice=_invoice)
         with pytest.raises(FrozenInstanceError):
             event.invoice = None
 
-    def test_cannot_reassign_customer(self, _customer, as_test_workspace):
+    def test_cannot_reassign_customer(self, _customer):
         event = CustomerCreated.create(customer=_customer)
         with pytest.raises(FrozenInstanceError):
             event.customer = None
 
-    def test_cannot_reassign_note(self, _note, as_test_workspace):
+    def test_cannot_reassign_note(self, _note):
         event = NoteCreated.create(note=_note)
         with pytest.raises(FrozenInstanceError):
             event.note = None
 
-    def test_cannot_reassign_event_id(self, _ticket, as_test_workspace):
+    def test_cannot_reassign_event_id(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         with pytest.raises(FrozenInstanceError):
             event.event_id = "tampered"
 
-    def test_cannot_reassign_occurred_at(self, _ticket, as_test_workspace):
+    def test_cannot_reassign_occurred_at(self, _ticket):
         event = TicketCreated.create(ticket=_ticket)
         with pytest.raises(FrozenInstanceError):
             event.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -232,7 +232,7 @@ class TestFrozenFields:
 
 class TestInheritance:
 
-    def test_ticket_events_inherit_from_ticket_event_and_crm_event(self, _ticket, as_test_workspace):
+    def test_ticket_events_inherit_from_ticket_event_and_crm_event(self, _ticket):
         for cls in [TicketCreated, TicketClockIn, TicketCompleted, TicketCancelled]:
             event = cls.create(ticket=_ticket)
             assert isinstance(event, TicketEvent)
@@ -241,20 +241,20 @@ class TestInheritance:
             assert not isinstance(event, CustomerEvent)
             assert not isinstance(event, NoteEvent)
 
-    def test_invoice_events_inherit_from_invoice_event_and_crm_event(self, _invoice, as_test_workspace):
+    def test_invoice_events_inherit_from_invoice_event_and_crm_event(self, _invoice):
         for cls in [InvoiceSent, InvoicePaid]:
             event = cls.create(invoice=_invoice)
             assert isinstance(event, InvoiceEvent)
             assert isinstance(event, CRMEvent)
             assert not isinstance(event, TicketEvent)
 
-    def test_customer_created_inherits_from_customer_event_and_crm_event(self, _customer, as_test_workspace):
+    def test_customer_created_inherits_from_customer_event_and_crm_event(self, _customer):
         event = CustomerCreated.create(customer=_customer)
         assert isinstance(event, CustomerEvent)
         assert isinstance(event, CRMEvent)
         assert not isinstance(event, TicketEvent)
 
-    def test_note_created_inherits_from_note_event_and_crm_event(self, _note, as_test_workspace):
+    def test_note_created_inherits_from_note_event_and_crm_event(self, _note):
         event = NoteCreated.create(note=_note)
         assert isinstance(event, NoteEvent)
         assert isinstance(event, CRMEvent)

@@ -275,10 +275,10 @@ class TestDataCustomers:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["id"] == str(sample_customer.id)
-        assert data["notes"] is None
+        assert data["customer_notes"] is None
         assert data["tickets"][0]["id"] == str(sample_ticket.id)
         assert data["invoices"][0]["id"] == str(invoice.id)
-        assert data["note_items"][0]["id"] == str(sample_note.id)
+        assert data["notes"][0]["id"] == str(sample_note.id)
         assert data["messages"][0]["id"] == str(sample_message.id)
         assert data["attributes"][0]["id"] == str(sample_attribute.id)
 
@@ -352,7 +352,6 @@ class TestDataTickets:
         assert response.status_code == 200
         data = response.json()["data"]
         assert "notes" in data
-        assert "note_items" in data
         assert data["job_notes"] is None
         assert len(data["notes"]) == 1
         assert data["notes"][0]["content"] == "Ticket note here"

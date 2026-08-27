@@ -4,16 +4,6 @@ import pytest
 from uuid import uuid4
 
 
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService with real DB."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return CustomerService(db, audit, event_bus)
-
-
 class TestCustomerCreate:
     """Tests for CustomerService.create."""
 

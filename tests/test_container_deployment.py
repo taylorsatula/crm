@@ -42,9 +42,12 @@ def test_migrations_run_before_crm_and_reject_stale_base_schemas() -> None:
     assert "condition: service_completed_successfully" in crm_block
     assert "postgres_superuser_password" in runner
     assert "('workspaces')" in runner
-    assert "('ticket_closeouts')" in runner
+    assert "('customers')" in runner
+    assert "('addresses')" in runner
+    assert "('tickets')" in runner
+    assert "('line_items')" in runner
+    assert "-ne 5" in runner  # all five base-schema tables must exist
     assert "stale or incomplete" in runner
-    assert "partially present" in runner
 
 
 def test_vault_bootstrap_scopes_crm_secrets_and_preserves_partial_state() -> None:

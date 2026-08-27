@@ -8,43 +8,6 @@ from utils.timezone import now_utc
 
 
 @pytest.fixture
-def note_service(db, event_bus):
-    """NoteService with real DB."""
-    from core.services.note_service import NoteService
-    from core.audit import AuditLogger
-
-    audit = AuditLogger(db)
-    return NoteService(db, audit, event_bus)
-
-
-@pytest.fixture
-def customer_service(db, event_bus):
-    """CustomerService for test setup."""
-    from core.services.customer_service import CustomerService
-    from core.audit import AuditLogger
-
-    return CustomerService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def ticket_service(db, event_bus):
-    """TicketService for test setup."""
-    from core.services.ticket_service import TicketService
-    from core.audit import AuditLogger
-
-    return TicketService(db, AuditLogger(db), event_bus)
-
-
-@pytest.fixture
-def address_service(db):
-    """AddressService for test setup."""
-    from core.services.address_service import AddressService
-    from core.audit import AuditLogger
-
-    return AddressService(db, AuditLogger(db))
-
-
-@pytest.fixture
 def test_customer(as_test_workspace, customer_service):
     """Create a test customer."""
     from core.models import CustomerCreate

@@ -116,7 +116,13 @@ def test_today_query_uses_workspace_timezone(
         db.execute("UPDATE workspaces SET timezone = %s WHERE id = %s", (timezone, test_workspace_id))
         customer = customer_service.create(CustomerCreate(first_name="Timezone"))
         address = address_service.create(
-            AddressCreate(customer_id=customer.id, street="1 Time Lane")
+            AddressCreate(
+                customer_id=customer.id,
+                street="1 Time Lane",
+                city="Auckland",
+                state="AKL",
+                zip="1010",
+            )
         )
         ticket = ticket_service.create(
             TicketCreate(

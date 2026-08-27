@@ -48,7 +48,7 @@ class FakeContainer:
         self.services = {name: FakeService() for name in (
             "customer", "ticket", "catalog", "line_item", "invoice", "note",
             "attribute", "message", "address", "workspace_settings", "workflow",
-            "square_import", "closeout",
+            "square_import", "closeout", "lead", "quote",
         )}
         self.clients = {
             "database": self.database,
@@ -82,18 +82,26 @@ def _headers():
     }
 
 
-def test_private_service_registers_only_domain_workspace_and_health_routes():
+def test_private_service_registers_domain_workspace_and_health_routes():
     app = create_app(container_factory=RecordingFactory())
     route_paths = {route.path for route in app.routes}
-    assert {
+    assert route_paths == {
         "/health",
         "/health/ready",
         "/health/live",
         "/api/data",
+        "/api/data/today",
+        "/api/data/tickets/today",
+        "/api/data/tickets/current",
+        "/api/data/tickets/{ticket_id}/packet",
+        "/api/data/customers/{customer_id}/dossier",
         "/api/actions",
         "/api/lifecycle/workspaces",
         "/api/lifecycle/workspaces/{workspace_id}",
-    }.issubset(route_paths)
+        "/api/lifecycle/workspaces/{workspace_id}/timezone",
+        "/api/lifecycle/workspaces/{workspace_id}/tokens",
+        "/api/lifecycle/workspaces/{workspace_id}/tokens/{token_id}",
+    }
     assert "/" not in route_paths
     assert all(not path.startswith("/auth") for path in route_paths)
     assert "/docs" not in route_paths

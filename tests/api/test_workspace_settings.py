@@ -132,7 +132,11 @@ def test_workspace_settings_reject_invalid_values(client):
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    fields = [e["field"] for e in body["data"]["validation_errors"]]
+    assert "working_days" in fields
 
 
 def test_workspace_settings_are_isolated(app, client):
