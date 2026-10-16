@@ -199,14 +199,19 @@ class AddressService:
         if current is None:
             return False
 
-        # Reject deletion when any ticket references this address. Imported
-        # addressless tickets have NULL address_id and therefore do not block it.
-        # is `UUID REFERENCES addresses(id)` with no ON DELETE clause, so an
-        # unguarded hard delete raises an opaque FK violation (INTERNAL_ERROR/500).
-        # Count all tickets including soft-deleted ones; the FK constraint ignores
-        # soft deletes, so a deleted ticket still blocks address deletion.
+        # Reject deletion when a live (non-deleted) ticket references this
+        # address. tickets.address_id is `UUID REFERENCES addresses(id)` with
+        # no ON DELETE clause, so soft-deleted tickets must have their
+        # reference nulled before the hard delete or Postgres raises an
+        # opaque FK violation. Cancelled tickets are live rows and still block.
+        self.postgres.execute(
+            "UPDATE tickets SET address_id = NULL "
+            "WHERE address_id = %s AND deleted_at IS NOT NULL",
+            (address_id,)
+        )
         referencing = self.postgres.execute_single(
-            "SELECT COUNT(*) AS n FROM tickets WHERE address_id = %s",
+            "SELECT COUNT(*) AS n FROM tickets "
+            "WHERE address_id = %s AND deleted_at IS NULL",
             (address_id,)
         )
         if referencing is not None and referencing["n"] > 0:
