@@ -116,7 +116,9 @@ CREATE TABLE workspace_settings (
     working_days TEXT[] NOT NULL DEFAULT ARRAY['mon', 'tue', 'wed', 'thu', 'fri']::TEXT[],
     default_appointment_minutes INTEGER NOT NULL DEFAULT 120,
     travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,
-    appointment_confirmation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Default OFF: CRM-side scheduling creates email-channel messages it cannot
+    -- deliver unless the user explicitly enables confirmations and configures email.
+    appointment_confirmation_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     appointment_reminder_minutes INTEGER DEFAULT 1440,
     service_reminder_mode TEXT NOT NULL DEFAULT 'ask_each_time',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
